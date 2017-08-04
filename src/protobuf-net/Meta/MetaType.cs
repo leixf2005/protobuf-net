@@ -430,9 +430,19 @@ namespace ProtoBuf.Meta
             }
             if (surrogate != null)
             {
-                MetaType mt = model[surrogate], mtBase;
-                while ((mtBase = mt.baseType) != null) { mt = mtBase; }
-                return new SurrogateSerializer(model, type, surrogate, mt.Serializer);
+                var core = ValueMember.TryGetCoreSerializer(model, DataFormat.Default, surrogate, out var wireType, false, false, false, false);
+                if(core == null)
+                {
+                    MetaType mt = model[surrogate], mtBase;
+                    while ((mtBase = mt.baseType) != null) { mt = mtBase; }
+                    return new SurrogateSerializer(model, type, surrogate, mt.Serializer, false);
+                }
+                else
+                {
+                    // when writing this as a raw type, include a tag wrapper
+                    var tagged = new TagDecorator(1, wireType, false, core);
+                    return new SurrogateSerializer(model, type, surrogate, tagged, false);
+                }
             }
             if (IsAutoTuple)
             {
@@ -1317,13 +1327,14 @@ namespace ProtoBuf.Meta
         private Type constructType;
         /// <summary>
         /// Adds a member (by name) to the MetaType
-        /// </summary>     
+        /// </summary>
         public MetaType Add(string memberName)
         {
             Add(GetNextFieldNumber(), memberName);
             return this;
         }
         Type surrogate;
+        internal Type SurrogateType => surrogate;
         /// <summary>
         /// Performs serialization of this type via a surrogate; all
         /// other serialization options are ignored and handled
@@ -1332,7 +1343,7 @@ namespace ProtoBuf.Meta
         public void SetSurrogate(Type surrogateType)
         {
             if (surrogateType == type) surrogateType = null;
-            if (surrogateType != null)
+            if (surrogateType != null && ValueMember.TryGetCoreSerializer(model, DataFormat.Default, surrogateType, out var dwt, false, false, false, false) == null)
             {
                 // note that BuildSerializer checks the **CURRENT TYPE** is OK to be surrogated
                 if (surrogateType != null && Helpers.IsAssignableFrom(model.MapType(typeof(IEnumerable)), surrogateType))

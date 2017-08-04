@@ -24,14 +24,15 @@ namespace ProtoBuf.Serializers
         void IProtoTypeSerializer.Callback(object value, ProtoBuf.Meta.TypeModel.CallbackType callbackType, SerializationContext context) { }
 #endif
 
-        public bool ReturnsValue { get { return false; } }
+        private bool returnValue;
+        public bool ReturnsValue { get { return returnValue; } }
         public bool RequiresOldValue { get { return true; } }
         public Type ExpectedType { get { return forType; } }
         private readonly Type forType, declaredType;
         private readonly MethodInfo toTail, fromTail;
-        IProtoTypeSerializer rootTail;
+        IProtoSerializer rootTail;
 
-        public SurrogateSerializer(TypeModel model, Type forType, Type declaredType, IProtoTypeSerializer rootTail)
+        public SurrogateSerializer(TypeModel model, Type forType, Type declaredType, IProtoSerializer rootTail, bool returnValue)
         {
             Helpers.DebugAssert(forType != null, "forType");
             Helpers.DebugAssert(declaredType != null, "declaredType");
@@ -39,6 +40,7 @@ namespace ProtoBuf.Serializers
             Helpers.DebugAssert(rootTail.RequiresOldValue, "RequiresOldValue");
             Helpers.DebugAssert(!rootTail.ReturnsValue, "ReturnsValue");
             Helpers.DebugAssert(declaredType == rootTail.ExpectedType || Helpers.IsSubclassOf(declaredType, rootTail.ExpectedType));
+            this.returnValue = returnValue;
             this.forType = forType;
             this.declaredType = declaredType;
             this.rootTail = rootTail;
@@ -127,7 +129,8 @@ namespace ProtoBuf.Serializers
             
             // invoke the tail and convert the outgoing value
             args[0] = rootTail.Read(value, source);
-            return fromTail.Invoke(null, args);
+            var result = fromTail.Invoke(null, args);
+            return returnValue ? result : null;
         }
 #endif
 
@@ -145,7 +148,19 @@ namespace ProtoBuf.Serializers
 
                 ctx.LoadValue(converted); // load from surrogate local
                 ctx.EmitCall(fromTail);  // static convert op, surrogate-to-primary
-                ctx.StoreValue(valueFrom); // store back into primary
+
+                if(returnValue)
+                {
+                    // fine, leave it on the stack
+                }
+                else if(valueFrom == null)
+                {
+                    ctx.DiscardValue(); // nowhere to put it
+                }
+                else
+                {
+                    ctx.StoreValue(valueFrom); // store back into primary
+                }
             }
         }
 

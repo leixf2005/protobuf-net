@@ -702,19 +702,45 @@ namespace ProtoBuf.Meta
                     defaultWireType = WireType.String;
                     return new SystemTypeSerializer(model);
             }
-            IProtoSerializer parseable = model.AllowParseableTypes ? ParseableSerializer.TryCreate(type, model) : null;
-            if (parseable != null)
-            {
-                defaultWireType = WireType.String;
-                return parseable;
-            }
+
+            // we'll need the meta-type (if it exists) below
+            MetaType meta = null;
+            int key = -1;
             if (allowComplexTypes && model != null)
             {
-                int key = model.GetKey(type, false, true);
-                MetaType meta = null;
-                if (key >= 0)
+                key = model.GetKey(type, false, true);
+                if(key >= 0)
                 {
                     meta = model[type];
+                }
+            }
+
+            // try surrogate conversion
+            if (meta != null && meta.SurrogateType != null)
+            {
+                var coreSerializer = ValueMember.TryGetCoreSerializer(model, dataFormat, meta.SurrogateType, out defaultWireType,
+                    asReference, dynamicType, overwriteList, false);
+                if(coreSerializer != null)
+                {
+                    return new SurrogateSerializer(model, type, meta.SurrogateType, coreSerializer, true);
+                }
+                throw new InvalidOperationException("inbuilt surrogate specified (" + meta.SurrogateType.Name + "), but suitable operators not found: " + type.FullName);
+            }
+            // try parseable types (Parse etc)
+            if (model.AllowParseableTypes)
+            {
+                var parseable = ParseableSerializer.TryCreate(type, model);
+                if (parseable != null)
+                {
+                    defaultWireType = WireType.String;
+                    return parseable;
+                }
+            }
+            
+            if (allowComplexTypes && model != null)
+            {
+                if (meta != null)
+                {                    
                     if(dataFormat == DataFormat.Default && meta.IsGroup)
                     {
                         dataFormat = DataFormat.Group;

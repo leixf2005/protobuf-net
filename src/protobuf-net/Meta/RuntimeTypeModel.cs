@@ -1138,7 +1138,7 @@ namespace ProtoBuf.Meta
             string path = options.OutputPath;
 #pragma warning restore 0618
             BuildAllSerializers();
-            Freeze();
+            
             bool save = !Helpers.IsNullOrEmpty(path);
             if (Helpers.IsNullOrEmpty(typeName))
             {
