@@ -9,15 +9,15 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Pipelines;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
-using System.Text.Utf8;
 using System.Threading.Tasks;
 using Xunit;
 
 public class SimpleUsage : IDisposable
 {
-    private PipeFactory _factory = new PipeFactory();
-    void IDisposable.Dispose() => _factory.Dispose();
+    private PipeOptions _options = new PipeOptions(new MemoryPool());
+    void IDisposable.Dispose() => _options?.Pool?.Dispose();
 
     static void Main()
     {
@@ -31,19 +31,19 @@ public class SimpleUsage : IDisposable
 
             Serializer.Serialize(ms, customer);
             Console.WriteLine($"serialized: {ms.Length} bytes");
-            
+
             ms.Position = 0;
             var clone = Serializer.Deserialize<Customer>(ms);
             Describe(clone, "old code, old encoder");
 
-            if(!ms.TryGetBuffer(out var range))
+            if (!ms.TryGetBuffer(out var range))
             {
                 range = new ArraySegment<byte>(ms.ToArray());
             }
-            Buffer<byte> buffer = range.Array; // y u no convert?
+            Memory<byte> buffer = range.Array; // y u no convert?
             buffer = buffer.Slice(range.Offset, range.Count);
             var task = SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, buffer, false);
-            if(task.IsCompleted)
+            if (task.IsCompleted)
             {
                 Console.WriteLine("completed!");
                 Describe(task.Result, "new code, old encoder");
@@ -66,7 +66,7 @@ public class SimpleUsage : IDisposable
 
             const int LOOP = 50000;
             var watch = Stopwatch.StartNew();
-            for(int i = 0; i < LOOP; i++)
+            for (int i = 0; i < LOOP; i++)
             {
                 ms.Position = 0;
                 GC.KeepAlive(Serializer.Deserialize<Customer>(ms));
@@ -297,7 +297,7 @@ public class SimpleUsage : IDisposable
     }
     private async Task ReadTestPipe<T>(string hex, Func<AsyncProtoReader, T, ValueTask<T>> deserializer, string expected)
     {
-        var pipe = _factory.Create();
+        var pipe = new Pipe(_options);
         await AppendPayloadAsync(pipe, hex);
         pipe.Writer.Complete(); // simulate EOF
 
@@ -313,7 +313,7 @@ public class SimpleUsage : IDisposable
     private async Task ReadTestBuffer<T>(string hex, Func<AsyncProtoReader, T, ValueTask<T>> deserializer, string expected)
     {
         var blob = ParseBlob(hex);
-        Trace($"deserializing via {nameof(BufferReader)}...");
+        Trace($"deserializing via {nameof(MemoryReader)}...");
         using (var reader = AsyncProtoReader.Create(blob, true))
         {
             var obj = await deserializer(reader, default(T));
@@ -339,19 +339,41 @@ public class SimpleUsage : IDisposable
         }
         else
         {
-            var pipe = _factory.Create();
+            var pipe = new Pipe(_options);
             using (var writer = AsyncProtoWriter.Create(pipe.Writer))
             {
                 bytes = await serializer(writer, value);
                 await Console.Out.WriteLineAsync($"Serialized to pipe in {bytes} bytes");
                 await writer.FlushAsync(true);
             }
-            var buffer = await pipe.Reader.ReadToEndAsync();
-            actual = NormalizeHex(BitConverter.ToString(buffer.ToArray()));
+            var blob = await ReadToEndBlobAsync(pipe.Reader);
+            actual = NormalizeHex(BitConverter.ToString(blob));
         }
         expected = NormalizeHex(expected);
         Assert.Equal(expected, actual);
         return bytes;
+    }
+
+    public static async Task<byte[]> ReadToEndBlobAsync(IPipeReader input)
+    {
+        while (true)
+        {
+            // Wait for more data
+            var result = await input.ReadAsync();
+
+            if (result.IsCompleted)
+            {
+                // Read all the data, return it
+                var tmp = result.Buffer.ToArray();
+                // release from the source
+                input.Advance(result.Buffer.End, result.Buffer.End);
+            }
+            else
+            {
+                // Don't advance the buffer so remains in buffer
+                input.Advance(result.Buffer.Start, result.Buffer.End);
+            }
+        }
     }
     private async Task WriteTestSpan<T>(long bytes, T value, string expected, Func<AsyncProtoWriter, T, ValueTask<long>> serializer)
     {
@@ -433,7 +455,7 @@ public class SimpleUsage : IDisposable
 
 
 
-    
+
     public abstract class AsyncProtoWriter : IDisposable
     {
         public virtual Task FlushAsync(bool final) => Task.CompletedTask;
@@ -447,12 +469,12 @@ public class SimpleUsage : IDisposable
 
         private ValueTask<int> WriteFieldHeader(int fieldNumber, WireType wireType) => WriteVarintUInt32Async((uint)((fieldNumber << 3) | (int)wireType));
 
-        public async ValueTask<int> WriteStringAsync(int fieldNumber, Utf8String value)
-        {
-            return await WriteFieldHeader(fieldNumber, WireType.String)
-                + await WriteVarintUInt32Async((uint)value.Length)
-                + await WriteBytes(value.Bytes);
-        }
+        //public async ValueTask<int> WriteStringAsync(int fieldNumber, Utf8String value)
+        //{
+        //    return await WriteFieldHeader(fieldNumber, WireType.String)
+        //        + await WriteVarintUInt32Async((uint)value.Length)
+        //        + await WriteBytes(value.Bytes);
+        //}
         public async ValueTask<int> WriteStringAsync(int fieldNumber, string value)
         {
             if (value == null) return 0;
@@ -460,14 +482,14 @@ public class SimpleUsage : IDisposable
                 + (value.Length == 0 ? await WriteVarintUInt32Async(0) : await WriteStringWithLengthPrefix(value));
         }
         protected static readonly Encoding Encoding = Encoding.UTF8;
-        protected static TextEncoder Encoder = TextEncoder.Utf8;
+        // protected static TextEncoder Encoder = TextEncoder.Utf8;
 
-        public async ValueTask<int> WriteBytesAsync(int fieldNumber, ReadOnlySpan<byte> value)
-        {
-            int bytes = await WriteFieldHeader(fieldNumber, WireType.String) + await WriteVarintUInt32Async((uint)value.Length);
-            if (value.Length != 0) bytes += await WriteBytes(value);
-            return bytes;
-        }
+        //public async ValueTask<int> WriteBytesAsync(int fieldNumber, ReadOnlySpan<byte> value)
+        //{
+        //    int bytes = await WriteFieldHeader(fieldNumber, WireType.String) + await WriteVarintUInt32Async((uint)value.Length);
+        //    if (value.Length != 0) bytes += await WriteBytes(value);
+        //    return bytes;
+        //}
 
         protected async virtual ValueTask<int> WriteStringWithLengthPrefix(string value)
         {
@@ -521,7 +543,7 @@ public class SimpleUsage : IDisposable
         }
         public static AsyncProtoWriter Create(IPipeWriter writer, bool closePipe = true) => new PipeWriter(writer, closePipe);
 
-        public static AsyncProtoWriter Create(Buffer<byte> span) => new BufferWriter(span);
+        public static AsyncProtoWriter Create(Memory<byte> span) => new BufferWriter(span);
 
         /// <summary>
         /// Provides an AsyncProtoWriter that computes lengths without requiring backing storage
@@ -625,7 +647,7 @@ public class SimpleUsage : IDisposable
             _output.Ensure(Math.Min(128, value.Length << 2) | 1);
             var span = _output.Buffer.Span;
             int bytesWritten;
-            if (Encoder.TryEncode(value, span.Slice(1, Math.Max(127, span.Length - 1)), out bytesWritten)
+            if (TryEncode(value, span.Slice(1, Math.Max(127, span.Length - 1)), out bytesWritten)
                 && (bytesWritten & ~127) == 0) // <= 127
             {
                 Debug.Assert(bytesWritten <= 127, "Too many bytes written in TryWriteShortStringWithLengthPrefix");
@@ -637,6 +659,8 @@ public class SimpleUsage : IDisposable
             return 0; // failure (for example: we had a 90 character string, but it turned out to have non-trivial
             // unicode contents which meant that it took more than 127 bytes)
         }
+
+
         int WriteLongStringWithLengthPrefix(string value)
         {
             _output.Ensure(5);
@@ -645,7 +669,7 @@ public class SimpleUsage : IDisposable
             {
                 // that's handy - it all fits in the buffer, and the prefix-size is the same regardless of best/worst case
                 var span = _output.Buffer.Span;
-                bool success = Encoder.TryEncode(value, span.Slice(maxHeaderBytes), out payloadBytes);
+                bool success = TryEncode(value, span.Slice(maxHeaderBytes), out payloadBytes);
                 Debug.Assert(success, "TryEncode failed in WriteLongStringWithLengthPrefix");
                 Debug.Assert(payloadBytes <= maxPayloadBytes, "Payload exceeded expected size");
 
@@ -663,7 +687,7 @@ public class SimpleUsage : IDisposable
                 if (payloadBytes <= _output.Buffer.Length)
                 {
                     // already enough space in the output buffer - just write it
-                    bool success = Encoder.TryEncode(value, _output.Buffer.Span, out bytesWritten);
+                    bool success = TryEncode(value, _output.Buffer.Span, out bytesWritten);
                     Debug.Assert(success, "TryEncode failed in WriteLongStringWithLengthPrefix");
                     Trace($"Wrote '{value}' in {bytesWritten} bytes into available buffer space");
                 }
@@ -688,7 +712,8 @@ public class SimpleUsage : IDisposable
 
                     int bytesWritten, charsConsumed;
                     // note: not expecting success here (except for the last one)
-                    Encoder.TryEncode(utf16, output.Buffer.Span, out charsConsumed, out bytesWritten);
+                    TryEncode(utf16, output.Buffer.Span, out charsConsumed, out bytesWritten);
+
                     utf16 = utf16.Slice(charsConsumed);
                     output.Advance(bytesWritten);
 
@@ -697,6 +722,45 @@ public class SimpleUsage : IDisposable
                 } while (utf16.Length != 0);
                 return totalBytesWritten;
             }
+        }
+
+        // I need some text APIs back!
+        //internal static unsafe bool TryEncode(string utf16, Span<byte> span, out int bytesWritten)
+        //    => TryEncode(utf16.AsReadOnlySpan(), span, out _, out bytesWritten);
+
+        internal static unsafe bool TryEncode(ReadOnlySpan<char> utf16, Span<byte> span, out int charsConsumed, out int bytesWritten)
+        {
+            fixed (char* chars = &MemoryMarshal.GetReference(utf16))
+            fixed (byte* bytes = &MemoryMarshal.GetReference(span))
+            {
+                bytesWritten = Encoding.GetByteCount(chars, utf16.Length);
+                if (bytesWritten > span.Length)
+                {
+                    charsConsumed = 0;
+                    bytesWritten = 0;
+                    return false;
+                }
+                bytesWritten = Encoding.GetBytes(chars, utf16.Length, bytes, span.Length);
+                charsConsumed = utf16.Length;
+            }
+            return true;
+        }
+
+
+        internal static unsafe bool TryEncode(string value, Span<byte> span, out int bytesWritten)
+        {
+            bytesWritten = Encoding.GetByteCount(value);
+            if (bytesWritten > span.Length)
+            {
+                bytesWritten = 0;
+                return false;
+            }
+            fixed (char* chars = value)
+            fixed (byte* bytes = &MemoryMarshal.GetReference(span))
+            {
+                Encoding.GetBytes(chars, value.Length, bytes, span.Length);
+            }
+            return true;
         }
 
         protected override ValueTask<int> WriteBytes(ReadOnlySpan<byte> bytes)
@@ -744,8 +808,8 @@ public class SimpleUsage : IDisposable
     }
     internal sealed class BufferWriter : AsyncProtoWriter
     {
-        private Buffer<byte> _buffer;
-        internal BufferWriter(Buffer<byte> span)
+        private Memory<byte> _buffer;
+        internal BufferWriter(Memory<byte> span)
         {
             _buffer = span;
         }
@@ -753,7 +817,7 @@ public class SimpleUsage : IDisposable
         protected override ValueTask<int> WriteBytes(ReadOnlySpan<byte> bytes)
         {
             bytes.CopyTo(_buffer.Span);
-            Trace($"Wrote {bytes} raw bytes ({_buffer.Length - bytes.Length} remain)");
+            Trace($"Wrote {bytes.Length} raw bytes ({_buffer.Length - bytes.Length} remain)");
             _buffer = _buffer.Slice(bytes.Length);
             return new ValueTask<int>(bytes.Length);
         }
@@ -788,7 +852,7 @@ public class SimpleUsage : IDisposable
         {
             // to encode without checking bytes, need 4 times length, plus 1 - the sneaky way
             int bytesWritten;
-            if (Encoder.TryEncode(value, _buffer.Slice(1, Math.Min(127, _buffer.Length - 1)).Span, out bytesWritten))
+            if (PipeWriter.TryEncode(value, _buffer.Slice(1, Math.Min(127, _buffer.Length - 1)).Span, out bytesWritten))
             {
                 Debug.Assert(bytesWritten <= 127, "Too many bytes written in TryWriteShortStringWithLengthPrefix");
                 _buffer.Span[0] = (byte)bytesWritten++; // note the post-increment here to account for the prefix byte
@@ -805,7 +869,7 @@ public class SimpleUsage : IDisposable
             {
                 // that's handy - it all fits in the buffer, and the prefix-size is the same regardless of best/worst case
                 var span = _buffer.Span;
-                bool success = Encoder.TryEncode(value, span.Slice(maxHeaderBytes), out payloadBytes);
+                bool success = PipeWriter.TryEncode(value, span.Slice(maxHeaderBytes), out payloadBytes);
                 Debug.Assert(success, "TryEncode failed in WriteLongStringWithLengthPrefix");
                 Debug.Assert(payloadBytes <= maxPayloadBytes, "Payload exceeded expected size");
 
@@ -823,7 +887,7 @@ public class SimpleUsage : IDisposable
                 _buffer = _buffer.Slice(headerBytes);
 
                 // we should already have enough space in the output buffer - just write it
-                bool success = Encoder.TryEncode(value, _buffer.Span, out bytesWritten);
+                bool success = PipeWriter.TryEncode(value, _buffer.Span, out bytesWritten);
                 if (!success) throw new InvalidOperationException("Span range would be exceeded");
                 Trace($"Wrote '{value}' payload in {payloadBytes} bytes into available buffer space ({_buffer.Length - payloadBytes} remain)");
                 Debug.Assert(bytesWritten == payloadBytes, "Payload length mismatch in WriteLongStringWithLengthPrefix");
@@ -835,7 +899,7 @@ public class SimpleUsage : IDisposable
         }
     }
 
-    
+
     static string NormalizeHex(string hex) => hex.Replace('-', ' ').Replace(" ", "").Trim().ToUpperInvariant();
 
     private static byte[] ParseBlob(string hex)

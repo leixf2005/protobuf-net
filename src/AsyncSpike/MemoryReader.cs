@@ -1,16 +1,15 @@
 ﻿using System;
-using System.Binary;
-using System.Buffers;
-using System.Diagnostics;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 
 namespace ProtoBuf
 {
-    internal sealed class BufferReader : AsyncProtoReader
+    internal sealed class MemoryReader : AsyncProtoReader
     {
-        private Buffer<byte> _active, _original;
+        private ReadOnlyMemory<byte> _active, _original;
         private readonly bool _useNewTextEncoder;
-        internal BufferReader(Buffer<byte> buffer, bool useNewTextEncoder) : base(buffer.Length)
+        internal MemoryReader(ReadOnlyMemory<byte> buffer, bool useNewTextEncoder) : base(buffer.Length)
         {
             _active = _original = buffer;
             _useNewTextEncoder = useNewTextEncoder;
@@ -21,48 +20,57 @@ namespace ProtoBuf
             Advance(bytes);
             return Task.CompletedTask;
         }
+        static MemoryReader()
+        {
+            if (!BitConverter.IsLittleEndian)
+                throw new NotImplementedException("big endian");
+        }
+        private ValueTask<T> ReadLittleEndian<T>() where T : struct
+        {
+            T val = _active.Span.NonPortableCast<byte, T>()[0];
+            _active = _active.Slice(Unsafe.SizeOf<T>());
+            Advance(Unsafe.SizeOf<T>());
+            return AsTask(val);
+        }
+
         protected override ValueTask<uint> ReadFixedUInt32Async()
-        {
-            var val = _active.Span.ReadLittleEndian<uint>();
-            _active = _active.Slice(4);
-            Advance(4);
-            return AsTask(val);
-        }
+            => ReadLittleEndian<uint>();
+
         protected override ValueTask<ulong> ReadFixedUInt64Async()
-        {
-            var val = _active.Span.ReadLittleEndian<ulong>();
-            _active = _active.Slice(8);
-            Advance(8);
-            return AsTask(val);
-        }
+            => ReadLittleEndian<ulong>();
+
         protected override ValueTask<byte[]> ReadBytesAsync(int bytes)
         {
             var arr = _active.Slice(0, bytes).ToArray();
             _active = _active.Slice(bytes);
             return AsTask(arr);
         }
-        protected unsafe override ValueTask<string> ReadStringAsync(int bytes)
+        internal static unsafe string GetUtf8String(ReadOnlyMemory<byte> buffer, int bytes)
+        {
+            if (MemoryMarshal.TryGetArray(buffer, out var segment))
+            {
+                return Encoding.GetString(segment.Array, segment.Offset, bytes);
+            }
+
+            fixed (byte* pointer = &MemoryMarshal.GetReference(buffer.Span))
+            {
+                return Encoding.GetString(pointer, bytes);
+            }
+        }
+        protected override ValueTask<string> ReadStringAsync(int bytes)
         {
             string text;
-            ArraySegment<byte> segment;
-            void* ptr;
             if (_useNewTextEncoder)
             {
-                bool result = Encoder.TryDecode(_active.Slice(0, bytes).Span, out text, out int consumed);
-                Debug.Assert(result, "TryDecode failed");
-                Debug.Assert(consumed == bytes, "TryDecode used wrong count");
-            }
-            else if (_active.TryGetArray(out segment))
-            {
-                text = Encoding.GetString(segment.Array, segment.Offset, bytes);
-            }
-            else if (_active.TryGetPointer(out ptr))
-            {
-                text = Encoding.GetString((byte*)ptr, bytes);
+                //bool result = Encoder.TryDecode(_active.Slice(0, bytes).Span, out text, out int consumed);
+                //Debug.Assert(result, "TryDecode failed");
+                //Debug.Assert(consumed == bytes, "TryDecode used wrong count");
+
+                throw new NotImplementedException();
             }
             else
             {
-                throw new InvalidOperationException("No text decoding");
+                text = GetUtf8String(_active, bytes);
             }
             _active = _active.Slice(bytes);
             Advance(bytes);

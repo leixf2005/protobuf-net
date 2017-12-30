@@ -35,7 +35,7 @@ namespace ProtoBuf.Meta
             return result;
 #else
 #if WINRT || COREFX
-            Attribute[] all = System.Linq.Enumerable.ToArray(type.GetTypeInfo().GetCustomAttributes(inherit));
+            Attribute[] all = System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Cast<Attribute>(type.GetTypeInfo().GetCustomAttributes(inherit)));
 #else
             object[] all = type.GetCustomAttributes(inherit);
 #endif
@@ -61,7 +61,7 @@ namespace ProtoBuf.Meta
             return result;
 #else
 #if WINRT || COREFX
-            Attribute[] all = System.Linq.Enumerable.ToArray(member.GetCustomAttributes(inherit));
+            Attribute[] all = System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Cast<Attribute>(member.GetCustomAttributes(inherit)));
 #else
             object[] all = member.GetCustomAttributes(inherit);
 #endif

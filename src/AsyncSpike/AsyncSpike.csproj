@@ -2,26 +2,39 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>netcoreapp1.1</TargetFramework>
-    <CoreFxVersion>4.3.0</CoreFxVersion>
-    <SystemMemoryVersion>4.4.0-preview1-25210-01</SystemMemoryVersion>
-    <CoreFxLabVersion>0.1.0-e170411-3</CoreFxLabVersion>
+    <TargetFramework>netcoreapp2.0</TargetFramework>
+    <CoreFxVersion>4.4.0</CoreFxVersion>
+    <FrameworkTargetVer>4.5.0-preview1-26021-02</FrameworkTargetVer>
+    <CoreFxLabVersion>0.1.0-e171215-1</CoreFxLabVersion>
     <RoslynVersion>2.3.0-rdonly-ref-61607-04</RoslynVersion>
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+    <LangVersion>latest</LangVersion>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="System.Buffers" Version="$(CoreFxVersion)" />
+    <!--<PackageReference Include="System.Buffers" Version="$(CoreFxVersion)" />
     <PackageReference Include="System.ValueTuple" Version="$(CoreFxVersion)" />
-    <PackageReference Include="System.Threading.Tasks.Extensions" Version="$(CoreFxVersion)" />
+    
     <PackageReference Include="System.Memory" Version="$(SystemMemoryVersion)" />
-    <PackageReference Include="System.Buffers.Primitives" Version="$(CoreFxLabVersion)" />
+    <PackageReference Include="System.FBuffers.Primitives" Version="$(CoreFxLabVersion)" />
     <PackageReference Include="System.IO.Pipelines" Version="$(CoreFxLabVersion)" />
     <PackageReference Include="System.IO.Pipelines.Text.Primitives" Version="$(CoreFxLabVersion)" />
     <PackageReference Include="Microsoft.TestPlatform.TestHost" Version="15.0.0" />
+    -->
     <PackageReference Include="xunit" Version="2.2.0" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.2.0" />
     <!--<PackageReference Include="Microsoft.Net.Compilers" Version="$(RoslynVersion)" PrivateAssets="All" />-->
 
     <ProjectReference Include="..\protobuf-net\protobuf-net.csproj" />
+
+    <PackageReference Include="System.Runtime.CompilerServices.Unsafe" Version="$(FrameworkTargetVer)" />
+    <PackageReference Include="System.Memory" Version="$(FrameworkTargetVer)" />
+    <PackageReference Include="System.Threading.Tasks.Extensions" Version="$(FrameworkTargetVer)" />
+    <PackageReference Include="System.IO.Pipelines" Version="$(CoreFxLabVersion)" />
+
+    <!-- not actually using this yet -->
+    <PackageReference Include="System.Buffers.Primitives" Version="$(CoreFxLabVersion)" />
+  </ItemGroup>
+  <ItemGroup>
+    <Service Include="{82a7f48d-3b50-4b1e-b82e-3ada8210c358}" />
   </ItemGroup>
 </Project>

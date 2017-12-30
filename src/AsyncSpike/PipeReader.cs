@@ -1,7 +1,6 @@
 ﻿using System;
-using System.IO;
 using System.IO.Pipelines;
-using System.IO.Pipelines.Text.Primitives;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 
 namespace ProtoBuf
@@ -41,45 +40,52 @@ namespace ProtoBuf
             }
             return Task.CompletedTask;
         }
+
+        private unsafe T ReadLittleEndian<T>() where T : struct
+        {
+            T val;
+            if(_available.First.Length >= Unsafe.SizeOf<T>())
+            {
+                val = _available.First.Span.NonPortableCast<byte, T>()[0];
+            }
+            else
+            {
+                byte* raw = stackalloc byte[Unsafe.SizeOf<T>()];
+                _available.Slice(0, Unsafe.SizeOf<T>())
+                    .CopyTo(new Span<byte>(raw, Unsafe.SizeOf<T>()));
+                val = Unsafe.Read<T>(raw);
+            }
+            _available = _available.Slice(Unsafe.SizeOf<T>());
+            Advance(Unsafe.SizeOf<T>());
+            return val;
+        }
+
         protected override ValueTask<uint> ReadFixedUInt32Async()
         {
             async ValueTask<uint> Awaited(Task task)
             {
                 await task.ConfigureAwait(false);
-                return Process();
-            }
-            uint Process()
-            {
-                var val = _available.ReadLittleEndian<uint>();
-                _available = _available.Slice(4);
-                Advance(4);
-                return val;
+                return ReadLittleEndian<uint>();
             }
             var t = EnsureBufferedAsync(4);
             if (!t.IsCompleted) return Awaited(t);
 
             t.Wait(); // check for exception
-            return AsTask(Process());
+            return AsTask(ReadLittleEndian<uint>());
         }
         protected override ValueTask<ulong> ReadFixedUInt64Async()
         {
             async ValueTask<ulong> Awaited(Task task)
             {
                 await task.ConfigureAwait(false);
-                return Process();
+                return ReadLittleEndian<ulong>();
             }
-            ulong Process()
-            {
-                var val = _available.ReadLittleEndian<ulong>();
-                _available = _available.Slice(8);
-                Advance(8);
-                return val;
-            }
+            
             var t = EnsureBufferedAsync(8);
             if (!t.IsCompleted) return Awaited(t);
 
             t.Wait(); // check for exception
-            return AsTask(Process());
+            return AsTask(ReadLittleEndian<ulong>());
         }
         protected override ValueTask<byte[]> ReadBytesAsync(int bytes)
         {
@@ -110,7 +116,16 @@ namespace ProtoBuf
             }
             string Process(int len)
             {
-                var s = _available.Slice(0, bytes).GetUtf8String();
+                string s;
+                var first = _available.First;
+                if (first.Length >= len)
+                {
+                    s = MemoryReader.GetUtf8String(first, len);
+                }
+                else
+                {
+                    throw new NotImplementedException("multi-span text");
+                }
                 Trace($"Read string: {s}");
 
                 _available = _available.Slice(len);
@@ -228,7 +243,7 @@ namespace ProtoBuf
                 return _reader.ReadAsync();
             }
             // accept data from the pipe, and see whether we should ask again
-            bool EndReadCheckAskAgain(ReadResult read, int oldLen)
+            bool EndReadCheckAskAgain(ReadResult read, long oldLen)
             {
                 _originalAsReceived = _available = read.Buffer;
                 _isReading = false;
@@ -240,7 +255,7 @@ namespace ProtoBuf
                 return read.Buffer.Length <= oldLen && !read.IsCompleted;
             }
             // convert from a synchronous request to an async continuation
-            async Task<bool> Awaited(ReadableBufferAwaitable t, int oldLen)
+            async Task<bool> Awaited(ReadableBufferAwaitable t, long oldLen)
             {
                 ReadResult read = await t; // note: not a Task/ValueTask<T> - ConfigureAwait does not apply
                 while (EndReadCheckAskAgain(read, oldLen))
@@ -251,7 +266,7 @@ namespace ProtoBuf
                 return PostProcess(oldLen);
             }
             // finalize state and see how well we did
-            bool PostProcess(int oldLen)
+            bool PostProcess(long oldLen)
             {
                 if (End != long.MaxValue)
                 {
@@ -267,7 +282,7 @@ namespace ProtoBuf
                     return False; // nope!
                 }
 
-                int oldLen = _available.Length;
+                var oldLen = _available.Length;
                 ReadResult read;
                 do
                 {
@@ -284,7 +299,7 @@ namespace ProtoBuf
         {
             if (_available.End != _originalAsReceived.End)
             {
-                int wasForConsoleMessage = _available.Length;
+                var wasForConsoleMessage = _available.Length;
                 // change back to the original right hand boundary
                 _available = _originalAsReceived.Slice(_available.Start);
                 Trace($"Data constraint removed; {_available.Length} bytes available (was {wasForConsoleMessage})");
@@ -295,7 +310,7 @@ namespace ProtoBuf
             if (End != long.MaxValue && checked(Position + _available.Length) > End)
             {
                 int allow = checked((int)(End - Position));
-                int wasForConsoleMessage = _available.Length;
+                var wasForConsoleMessage = _available.Length;
                 _available = _available.Slice(0, allow);
                 Trace($"Data constraint imposed; {_available.Length} bytes available (was {wasForConsoleMessage})");
             }
