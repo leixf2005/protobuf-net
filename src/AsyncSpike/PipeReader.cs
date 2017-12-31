@@ -1,8 +1,10 @@
 ﻿using System;
+using System.Buffers;
 using System.IO;
 using System.IO.Pipelines;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace ProtoBuf
@@ -12,7 +14,7 @@ namespace ProtoBuf
         private IPipeReader _reader;
         private readonly bool _closePipe;
         private volatile bool _isReading;
-        ReadableBuffer _available, _originalAsReceived;
+        ReadOnlyBuffer _available, _originalAsReceived;
         internal PipeReader(IPipeReader reader, bool closePipe, long bytes = long.MaxValue) : base(bytes)
         {
             _reader = reader;
@@ -200,7 +202,7 @@ namespace ProtoBuf
             t.Wait(); // check for exception
             return AsTask(Process(bytes));
         }
-        private static (int value, int consumed) TryPeekVarintInt32(ref ReadableBuffer buffer)
+        private static (int value, int consumed) TryPeekVarintInt32(ref ReadOnlyBuffer buffer)
         {
             Trace($"Parsing varint from {buffer.Length} bytes...");
             return (buffer.IsSingleSpan || buffer.First.Length >= MaxBytesForVarint)
@@ -212,7 +214,7 @@ namespace ProtoBuf
             int len = span.Length;
             if (len == 0) return (0, 0);
             // thought: optimize the "I have tons of data" case? (remove the length checks)
-            fixed (byte* spanPtr = &span.DangerousGetPinnableReference())
+            fixed (byte* spanPtr = &MemoryMarshal.GetReference(span))
             {
                 var ptr = spanPtr;
 
@@ -261,7 +263,7 @@ namespace ProtoBuf
                 throw new NotImplementedException("need moar pointer math");
             }
         }
-        private static unsafe (int value, int consumed) TryPeekVarintMultiSpan(ref ReadableBuffer buffer)
+        private static unsafe (int value, int consumed) TryPeekVarintMultiSpan(ref ReadOnlyBuffer buffer)
         {
             int value = 0;
             int consumed = 0, shift = 0;
@@ -270,7 +272,7 @@ namespace ProtoBuf
                 var span = segment.Span;
                 if (span.Length != 0)
                 {
-                    fixed (byte* ptr = &span.DangerousGetPinnableReference())
+                    fixed (byte* ptr = &MemoryMarshal.GetReference(span))
                     {
                         byte* head = ptr;
                         while (consumed++ < MaxBytesForVarint)
@@ -296,11 +298,11 @@ namespace ProtoBuf
         private Task<bool> RequestMoreDataAsync()
         {
             // ask the underlying pipe for more data
-            ReadableBufferAwaitable BeginReadAsync()
+            ValueAwaiter<ReadResult> BeginReadAsync()
             {
                 _reader.Advance(_available.Start, _available.End);
                 _isReading = true;
-                _available = default(ReadableBuffer);
+                _available = default(ReadOnlyBuffer);
                 return _reader.ReadAsync();
             }
             // accept data from the pipe, and see whether we should ask again
@@ -316,7 +318,7 @@ namespace ProtoBuf
                 return read.Buffer.Length <= oldLen && !read.IsCompleted;
             }
             // convert from a synchronous request to an async continuation
-            async Task<bool> Awaited(ReadableBufferAwaitable t, long oldLen)
+            async Task<bool> Awaited(ValueAwaiter<ReadResult> t, long oldLen)
             {
                 ReadResult read = await t; // note: not a Task/ValueTask<T> - ConfigureAwait does not apply
                 while (EndReadCheckAskAgain(read, oldLen))
@@ -427,7 +429,7 @@ namespace ProtoBuf
             var reader = _reader;
             var available = _available;
             _reader = null;
-            _available = default(ReadableBuffer);
+            _available = default(ReadOnlyBuffer);
             if (reader != null)
             {
                 if (_isReading)

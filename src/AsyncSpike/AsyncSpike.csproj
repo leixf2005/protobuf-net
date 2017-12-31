@@ -4,9 +4,9 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>netcoreapp2.0</TargetFramework>
     <CoreFxVersion>4.4.0</CoreFxVersion>
-    <FrameworkTargetVer>4.5.0-preview1-26021-02</FrameworkTargetVer>
-    <CoreFxLabVersion>0.1.0-e171215-1</CoreFxLabVersion>
-    <RoslynVersion>2.3.0-rdonly-ref-61607-04</RoslynVersion>
+    <FrameworkTargetVer>4.5.0-preview1-26030-01</FrameworkTargetVer>
+    <CoreFxLabVersion>0.1.0-e171230-2</CoreFxLabVersion>
+    <!--<RoslynVersion>2.3.0-rdonly-ref-61607-04</RoslynVersion>-->
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
@@ -15,7 +15,7 @@
     <PackageReference Include="System.ValueTuple" Version="$(CoreFxVersion)" />
     
     <PackageReference Include="System.Memory" Version="$(SystemMemoryVersion)" />
-    <PackageReference Include="System.FBuffers.Primitives" Version="$(CoreFxLabVersion)" />
+    <PackageReference Include="System.Buffers.Primitives" Version="$(CoreFxLabVersion)" />
     <PackageReference Include="System.IO.Pipelines" Version="$(CoreFxLabVersion)" />
     <PackageReference Include="System.IO.Pipelines.Text.Primitives" Version="$(CoreFxLabVersion)" />
     <PackageReference Include="Microsoft.TestPlatform.TestHost" Version="15.0.0" />
