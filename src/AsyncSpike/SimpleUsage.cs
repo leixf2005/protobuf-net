@@ -18,7 +18,7 @@ public class SimpleUsage : IDisposable
 {
     private PipeOptions _options = new PipeOptions(new MemoryPool());
     void IDisposable.Dispose() => _options?.Pool?.Dispose();
-
+    
     static void Main()
     {
         var rand = new Random(1234);
@@ -53,16 +53,16 @@ public class SimpleUsage : IDisposable
                 Console.WriteLine("incomplete");
             }
 
-            task = SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, buffer, true);
-            if (task.IsCompleted)
-            {
-                Console.WriteLine("completed!");
-                Describe(task.Result, "new code, new encoder");
-            }
-            else
-            {
-                Console.WriteLine("incomplete");
-            }
+            //task = SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, buffer, true);
+            //if (task.IsCompleted)
+            //{
+            //    Console.WriteLine("completed!");
+            //    Describe(task.Result, "new code, new encoder");
+            //}
+            //else
+            //{
+            //    Console.WriteLine("incomplete");
+            //}
 
             const int LOOP = 50000;
             var watch = Stopwatch.StartNew();
@@ -82,13 +82,13 @@ public class SimpleUsage : IDisposable
             watch.Stop();
             Console.WriteLine($"new async code, old encoder: {watch.ElapsedMilliseconds}ms");
 
-            watch = Stopwatch.StartNew();
-            for (int i = 0; i < LOOP; i++)
-            {
-                GC.KeepAlive(SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, buffer, true).Result);
-            }
-            watch.Stop();
-            Console.WriteLine($"new async code, new encoder: {watch.ElapsedMilliseconds}ms");
+            //watch = Stopwatch.StartNew();
+            //for (int i = 0; i < LOOP; i++)
+            //{
+            //    GC.KeepAlive(SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, buffer, true).Result);
+            //}
+            //watch.Stop();
+            //Console.WriteLine($"new async code, new encoder: {watch.ElapsedMilliseconds}ms");
         }
     }
 
