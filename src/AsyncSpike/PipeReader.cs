@@ -18,11 +18,30 @@ namespace ProtoBuf
             _reader = reader;
             _closePipe = closePipe;
         }
-        protected override Task SkipBytesAsync(int bytes)
+        protected override Task SkipBytesAsync(int pBytes)
         {
-            _available = _available.Slice(bytes);
-            Advance(bytes);
-            return Task.CompletedTask;
+            async Task ImplAsync(int bytes)
+            {
+                while (bytes > 0)
+                {
+                    if (!await RequestMoreDataAsync().ConfigureAwait(false)) ThrowEOF<int>();
+
+                    var remove = Math.Min(bytes, checked((int)_available.Length));
+                    _available = _available.Slice(remove);
+                    bytes -= remove;
+                    Advance(remove);
+                }
+            }
+            if (pBytes >= checked((int)_available.Length))
+            {
+                _available = _available.Slice(pBytes);
+                Advance(pBytes);
+                return Task.CompletedTask;
+            }
+
+            pBytes -= (int)_available.Length;
+            _available = _available.Slice(pBytes);
+            return ImplAsync(pBytes);
         }
         private Task EnsureBufferedAsync(int bytes)
         {
@@ -46,7 +65,7 @@ namespace ProtoBuf
         private unsafe T ReadLittleEndian<T>() where T : struct
         {
             T val;
-            if(_available.First.Length >= Unsafe.SizeOf<T>())
+            if (_available.First.Length >= Unsafe.SizeOf<T>())
             {
                 val = _available.First.Span.NonPortableCast<byte, T>()[0];
             }
@@ -82,7 +101,7 @@ namespace ProtoBuf
                 await task.ConfigureAwait(false);
                 return ReadLittleEndian<ulong>();
             }
-            
+
             var t = EnsureBufferedAsync(8);
             if (!t.IsCompleted) return Awaited(t);
 
@@ -124,7 +143,7 @@ namespace ProtoBuf
                 {
                     s = MemoryReader.GetUtf8String(first, len);
                 }
-                else if(_available.IsSingleSpan)
+                else if (_available.IsSingleSpan)
                 {
                     throw new EndOfStreamException();
                 }
@@ -134,11 +153,11 @@ namespace ProtoBuf
                     int bytesLeft = len;
                     var iter = _available.GetEnumerator();
                     int charCount = 0;
-                    while(bytesLeft > 0 && iter.MoveNext())
+                    while (bytesLeft > 0 && iter.MoveNext())
                     {
                         var buffer = iter.Current;
                         int bytesThisBuffer = Math.Min(bytesLeft, buffer.Length);
-                        fixed(byte* ptr = &MemoryMarshal.GetReference(buffer.Span))
+                        fixed (byte* ptr = &MemoryMarshal.GetReference(buffer.Span))
                         {
                             charCount += decoder.GetCharCount(ptr, bytesThisBuffer, false);
                         }
@@ -165,7 +184,7 @@ namespace ProtoBuf
                             }
                             bytesLeft -= bytesThisBuffer;
                         }
-                        if(charCount != 0 || bytesLeft != 0) throw new EndOfStreamException();
+                        if (charCount != 0 || bytesLeft != 0) throw new EndOfStreamException();
                     }
                 }
                 Trace($"Read string: {s}");
@@ -361,7 +380,7 @@ namespace ProtoBuf
         {
             async ValueTask<int?> Awaited(Task<bool> task, bool consumeData)
             {
-                while(await task.ConfigureAwait(false))
+                while (await task.ConfigureAwait(false))
                 {
                     var read = TryPeekVarintInt32(ref _available);
                     if (read.consumed != 0)
