@@ -5,45 +5,44 @@ using System.Threading.Tasks;
 
 namespace ProtoBuf
 {
-    internal sealed class MemoryReader : AsyncProtoReader
+    internal sealed class MemoryReader : SyncProtoReader
     {
+        public override bool PreferSync { get; }
         private ReadOnlyMemory<byte> _active, _original;
         private readonly bool _useNewTextEncoder;
-        internal MemoryReader(ReadOnlyMemory<byte> buffer, bool useNewTextEncoder) : base(buffer.Length)
+        internal MemoryReader(ReadOnlyMemory<byte> buffer, bool useNewTextEncoder, bool preferSync = true) : base(buffer.Length)
         {
             _active = _original = buffer;
             _useNewTextEncoder = useNewTextEncoder;
+            PreferSync = preferSync;
         }
-        protected override Task SkipBytesAsync(int bytes)
+        protected override void SkipBytes(int bytes)
         {
             _active = _active.Slice(bytes);
             Advance(bytes);
-            return Task.CompletedTask;
         }
         static MemoryReader()
         {
             if (!BitConverter.IsLittleEndian)
                 throw new NotImplementedException("big endian");
         }
-        private ValueTask<T> ReadLittleEndian<T>() where T : struct
+        private T ReadLittleEndian<T>() where T : struct
         {
             T val = _active.Span.NonPortableCast<byte, T>()[0];
             _active = _active.Slice(Unsafe.SizeOf<T>());
             Advance(Unsafe.SizeOf<T>());
-            return AsTask(val);
+            return val;
         }
 
-        protected override ValueTask<uint> ReadFixedUInt32Async()
-            => ReadLittleEndian<uint>();
+        protected override uint ReadFixedUInt32() => ReadLittleEndian<uint>();
 
-        protected override ValueTask<ulong> ReadFixedUInt64Async()
-            => ReadLittleEndian<ulong>();
+        protected override ulong ReadFixedUInt64() => ReadLittleEndian<ulong>();
 
-        protected override ValueTask<byte[]> ReadBytesAsync(int bytes)
+        protected override byte[] ReadBytes(int bytes)
         {
             var arr = _active.Slice(0, bytes).ToArray();
             _active = _active.Slice(bytes);
-            return AsTask(arr);
+            return arr;
         }
         internal static unsafe string GetUtf8String(ReadOnlyMemory<byte> buffer, int bytes)
         {
@@ -57,7 +56,7 @@ namespace ProtoBuf
                 return Encoding.GetString(pointer, bytes);
             }
         }
-        protected override ValueTask<string> ReadStringAsync(int bytes)
+        protected override string ReadString(int bytes)
         {
             string text;
             if (_useNewTextEncoder)
@@ -74,9 +73,9 @@ namespace ProtoBuf
             }
             _active = _active.Slice(bytes);
             Advance(bytes);
-            return AsTask(text);
+            return text;
         }
-        public override Task<bool> AssertNextField(int fieldNumber)
+        public override bool AssertNextField(int fieldNumber)
         {
             var result = PipeReader.TryPeekVarintSingleSpan(_active.Span);
             if (result.consumed != 0 && (result.value >> 3) == fieldNumber)
@@ -84,23 +83,23 @@ namespace ProtoBuf
                 SetFieldHeader(result.value);
                 _active = _active.Slice(result.consumed);
                 Advance(result.consumed);
-                return True;
+                return true;
             }
-            return False;
+            return false;
         }
-        protected override ValueTask<int?> TryReadVarintInt32Async(bool consume)
+        protected override int? TryReadVarintInt32(bool consume)
         {
             var result = PipeReader.TryPeekVarintSingleSpan(_active.Span);
             if (result.consumed == 0)
             {
-                return new ValueTask<int?>((int?)null);
+                return null;
             }
             if (consume)
             {
                 _active = _active.Slice(result.consumed);
                 Advance(result.consumed);
             }
-            return AsTask<int?>(result.value);
+            return result.value;
         }
         protected override void ApplyDataConstraint()
         {

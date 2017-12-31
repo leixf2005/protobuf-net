@@ -18,8 +18,22 @@ public class SimpleUsage : IDisposable
 {
     private PipeOptions _options = new PipeOptions(new MemoryPool());
     void IDisposable.Dispose() => _options?.Pool?.Dispose();
-    
-    static void Main()
+
+    static async Task<int> Main()
+    {
+        try { await Execute(); return 0; }
+        catch (Exception ex)
+        {
+            await Console.Error.WriteLineAsync();
+            while (ex != null)
+            {
+                await Console.Error.WriteLineAsync($"{ex.GetType().Name}: {ex.Message}");
+                ex = ex.InnerException;
+            }
+            return 1;
+        }
+    }
+    static async Task Execute()
     {
         var rand = new Random(1234);
         var customer = InventCustomer(rand);
@@ -40,31 +54,58 @@ public class SimpleUsage : IDisposable
             {
                 range = new ArraySegment<byte>(ms.ToArray());
             }
-            Memory<byte> buffer = range.Array; // y u no convert?
-            buffer = buffer.Slice(range.Offset, range.Count);
-            var task = SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, buffer, false);
+            Memory<byte> buffer = range;
+
+            var task = SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, buffer, false, preferSync: false);
             if (task.IsCompleted)
             {
                 Console.WriteLine("completed!");
-                Describe(task.Result, "new code, old encoder");
+                Describe(task.Result, "new code, old encoder (prefer async)");
             }
             else
             {
                 Console.WriteLine("incomplete");
+                Describe(await task, "new code, old encoder (prefer async)");
+            }
+            task = SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, buffer, false, preferSync: true);
+            if (task.IsCompleted)
+            {
+                Console.WriteLine("completed!");
+                Describe(task.Result, "new code, old encoder (prefer sync)");
+            }
+            else
+            {
+                Console.WriteLine("incomplete");
+                Describe(await task, "new code, old encoder (prefer sync)");
             }
 
-            //task = SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, buffer, true);
-            //if (task.IsCompleted)
-            //{
-            //    Console.WriteLine("completed!");
-            //    Describe(task.Result, "new code, new encoder");
-            //}
-            //else
-            //{
-            //    Console.WriteLine("incomplete");
-            //}
+            using (var reader = await CreatePipeReader(range))
+            {
+                task = SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, reader);
+                if (task.IsCompleted)
+                {
+                    Console.WriteLine("completed!");
+                    Describe(task.Result, "new code, old encoder (pipe)");
+                }
+                else
+                {
+                    Console.WriteLine("incomplete");
+                    Describe(await task, "new code, old encoder (pipe)");
+                }
+            }
 
-            const int LOOP = 50000;
+                //task = SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, buffer, true);
+                //if (task.IsCompleted)
+                //{
+                //    Console.WriteLine("completed!");
+                //    Describe(task.Result, "new code, new encoder");
+                //}
+                //else
+                //{
+                //    Console.WriteLine("incomplete");
+                //}
+
+                const int LOOP = 50000;
             var watch = Stopwatch.StartNew();
             for (int i = 0; i < LOOP; i++)
             {
@@ -77,10 +118,29 @@ public class SimpleUsage : IDisposable
             watch = Stopwatch.StartNew();
             for (int i = 0; i < LOOP; i++)
             {
-                GC.KeepAlive(SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, buffer, false).Result);
+                GC.KeepAlive(await SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, buffer, false, preferSync: false));
             }
             watch.Stop();
-            Console.WriteLine($"new async code, old encoder: {watch.ElapsedMilliseconds}ms");
+            Console.WriteLine($"new async code, old encoder (prefer async): {watch.ElapsedMilliseconds}ms");
+
+            watch = Stopwatch.StartNew();
+            for (int i = 0; i < LOOP; i++)
+            {
+                GC.KeepAlive(await SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, buffer, false, preferSync: true));
+            }
+            watch.Stop();
+            Console.WriteLine($"new async code, old encoder (prefer sync): {watch.ElapsedMilliseconds}ms");
+
+            watch = Stopwatch.StartNew();
+            for (int i = 0; i < LOOP; i++)
+            {
+                using (var reader = await CreatePipeReader(range))
+                {
+                    GC.KeepAlive(await SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, reader));
+                }
+            }
+            watch.Stop();
+            Console.WriteLine($"new async code, old encoder (prefer pipe): {watch.ElapsedMilliseconds}ms");
 
             //watch = Stopwatch.StartNew();
             //for (int i = 0; i < LOOP; i++)
@@ -90,6 +150,22 @@ public class SimpleUsage : IDisposable
             //watch.Stop();
             //Console.WriteLine($"new async code, new encoder: {watch.ElapsedMilliseconds}ms");
         }
+    }
+
+    private static async ValueTask<PipeReader> CreatePipeReader(ArraySegment<byte> range)
+    {
+        var pipe = await CreatePipe(range);
+        return new PipeReader(pipe.Reader, true);
+    }
+
+    static readonly PipeOptions _pipeConfig = new PipeOptions(new MemoryPool());
+    private static async ValueTask<Pipe> CreatePipe(ArraySegment<byte> range)
+    {
+        var ms = new MemoryStream(range.Array, range.Offset, range.Count);
+        var pipe = new Pipe(_pipeConfig);
+        await pipe.WriteAsync(range);
+        pipe.Writer.Complete();
+        return pipe;
     }
 
     private static void Describe(Customer customer, string label)

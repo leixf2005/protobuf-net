@@ -1,6 +1,8 @@
 ﻿using System;
+using System.IO;
 using System.IO.Pipelines;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 
 namespace ProtoBuf
@@ -11,7 +13,7 @@ namespace ProtoBuf
         private readonly bool _closePipe;
         private volatile bool _isReading;
         ReadableBuffer _available, _originalAsReceived;
-        internal PipeReader(IPipeReader reader, bool closePipe, long bytes) : base(bytes)
+        internal PipeReader(IPipeReader reader, bool closePipe, long bytes = long.MaxValue) : base(bytes)
         {
             _reader = reader;
             _closePipe = closePipe;
@@ -114,7 +116,7 @@ namespace ProtoBuf
                 await task.ConfigureAwait(false);
                 return Process(len);
             }
-            string Process(int len)
+            unsafe string Process(int len)
             {
                 string s;
                 var first = _available.First;
@@ -122,9 +124,49 @@ namespace ProtoBuf
                 {
                     s = MemoryReader.GetUtf8String(first, len);
                 }
+                else if(_available.IsSingleSpan)
+                {
+                    throw new EndOfStreamException();
+                }
                 else
                 {
-                    throw new NotImplementedException("multi-span text");
+                    var decoder = Encoding.GetDecoder();
+                    int bytesLeft = len;
+                    var iter = _available.GetEnumerator();
+                    int charCount = 0;
+                    while(bytesLeft > 0 && iter.MoveNext())
+                    {
+                        var buffer = iter.Current;
+                        int bytesThisBuffer = Math.Min(bytesLeft, buffer.Length);
+                        fixed(byte* ptr = &MemoryMarshal.GetReference(buffer.Span))
+                        {
+                            charCount += decoder.GetCharCount(ptr, bytesThisBuffer, false);
+                        }
+                        bytesLeft -= bytesThisBuffer;
+                    }
+                    if (bytesLeft != 0) throw new EndOfStreamException();
+                    decoder.Reset();
+
+                    s = new string((char)0, charCount);
+                    iter = _available.GetEnumerator();
+                    bytesLeft = len;
+                    fixed (char* c = s)
+                    {
+                        var cPtr = c;
+                        while (bytesLeft > 0 && iter.MoveNext())
+                        {
+                            var buffer = iter.Current;
+                            int bytesThisBuffer = Math.Min(bytesLeft, buffer.Length);
+                            fixed (byte* ptr = &MemoryMarshal.GetReference(buffer.Span))
+                            {
+                                int charsWritten = decoder.GetChars(ptr, bytesThisBuffer, cPtr, charCount, false);
+                                cPtr += charsWritten;
+                                charCount -= charsWritten;
+                            }
+                            bytesLeft -= bytesThisBuffer;
+                        }
+                        if(charCount != 0 || bytesLeft != 0) throw new EndOfStreamException();
+                    }
                 }
                 Trace($"Read string: {s}");
 

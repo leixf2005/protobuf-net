@@ -2,17 +2,18 @@
 
 namespace ProtoBuf
 {
-    internal sealed class NullReader : AsyncProtoReader
+    internal sealed class NullReader : SyncProtoReader
     {
-        protected override ValueTask<int?> TryReadVarintInt32Async(bool consume) => AsTask((int?)null);
 
-        protected override ValueTask<string> ReadStringAsync(int bytes) => ThrowEOF<ValueTask<string>>();
+        protected override int? TryReadVarintInt32(bool consume) => null;
 
-        protected override ValueTask<byte[]> ReadBytesAsync(int bytes) => ThrowEOF<ValueTask<byte[]>>();
-        protected override ValueTask<uint> ReadFixedUInt32Async() => ThrowEOF<ValueTask<uint>>();
-        protected override ValueTask<ulong> ReadFixedUInt64Async() => ThrowEOF<ValueTask<ulong>>();
+        protected override string ReadString(int bytes) => ThrowEOF<string>();
+
+        protected override byte[] ReadBytes(int bytes) => ThrowEOF<byte[]>();
+        protected override uint ReadFixedUInt32() => ThrowEOF<uint>();
+        protected override ulong ReadFixedUInt64() => ThrowEOF<ulong>();
         protected override void ApplyDataConstraint() { }
         protected override void RemoveDataConstraint() { }
-        protected override Task SkipBytesAsync(int bytes) => ThrowEOF<Task>();
+        protected override void SkipBytes(int bytes) => ThrowEOF();
     }
 }

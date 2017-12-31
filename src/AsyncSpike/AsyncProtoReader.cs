@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Buffers;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipelines;
@@ -11,10 +10,12 @@ namespace ProtoBuf
 {
     public abstract class AsyncProtoReader : IDisposable
     {
-        public static readonly AsyncProtoReader Null = new NullReader();
+        public static readonly SyncProtoReader Null = new NullReader();
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         protected static ValueTask<T> AsTask<T>(T result) => new ValueTask<T>(result);
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        protected static Task<bool> AsTask(bool result) => result ? True : False;
         protected static readonly Task<bool> True = Task.FromResult(true), False = Task.FromResult(false);
 
         protected static readonly Encoding Encoding = new UTF8Encoding(false);
@@ -24,7 +25,7 @@ namespace ProtoBuf
         public virtual void Dispose() { }
 
 
-        public ValueTask<float> ReadSingleAsync()
+        public virtual ValueTask<float> ReadSingleAsync()
         {
             async ValueTask<float> Awaited32(ValueTask<uint> t) => ToSingle(await t.ConfigureAwait(false));
             async ValueTask<float> Awaited64(ValueTask<ulong> t) => (float)ToDouble(await t.ConfigureAwait(false));
@@ -40,7 +41,7 @@ namespace ProtoBuf
                     throw new InvalidOperationException();
             }
         }
-        public ValueTask<double> ReadDoubleAsync()
+        public virtual ValueTask<double> ReadDoubleAsync()
         {
             async ValueTask<double> Awaited32(ValueTask<uint> t) => (double)ToSingle(await t.ConfigureAwait(false));
             async ValueTask<double> Awaited64(ValueTask<ulong> t) => ToDouble(await t.ConfigureAwait(false));
@@ -57,20 +58,20 @@ namespace ProtoBuf
             }
         }
 
-        private static unsafe float ToSingle(uint value) => *(float*)(&value);
-        private static unsafe double ToDouble(ulong value) => *(double*)(&value);
+        protected static unsafe float ToSingle(uint value) => *(float*)(&value);
+        protected static unsafe double ToDouble(ulong value) => *(double*)(&value);
 
         protected abstract ValueTask<uint> ReadFixedUInt32Async();
         protected abstract ValueTask<ulong> ReadFixedUInt64Async();
 
-        public static AsyncProtoReader Create(Memory<byte> buffer, bool useNewTextEncoder) => new MemoryReader(buffer, useNewTextEncoder);
+        public static SyncProtoReader Create(Memory<byte> buffer, bool useNewTextEncoder, bool preferSync = true) => new MemoryReader(buffer, useNewTextEncoder, preferSync);
         public static AsyncProtoReader Create(IPipeReader pipe, bool closePipe = true, long bytes = long.MaxValue) => new PipeReader(pipe, closePipe, bytes);
 
         protected abstract Task SkipBytesAsync(int bytes);
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static int ValueOrEOF(int? varint) => varint == null ? ThrowEOF<int>() : varint.GetValueOrDefault();
+        protected static int ValueOrEOF(int? varint) => varint == null ? ThrowEOF<int>() : varint.GetValueOrDefault();
 
-        public virtual Task<bool> AssertNextField(int fieldNumber)
+        public virtual Task<bool> AssertNextFieldAsync(int fieldNumber)
         {
             async Task<bool> Awaited(int expected, ValueTask<int?> task)
             {
@@ -80,12 +81,15 @@ namespace ProtoBuf
                 var field = TryReadVarintInt32Async(false);
                 if (!field.IsCompleted) return Awaited(fieldNumber, field);
 
-                return field.Result == fieldNumber ? ReadNextFieldAsync() : False;
+                return (field.Result >> 3) == fieldNumber ? ReadNextFieldAsync() : False;
             }
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         protected static T ThrowEOF<T>() => throw new EndOfStreamException();
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        protected static void ThrowEOF() => throw new EndOfStreamException();
+
         public virtual Task SkipFieldAsync()
         {
             async Task AwaitedCheckVarint(ValueTask<int?> prefix)
@@ -125,7 +129,7 @@ namespace ProtoBuf
 
         protected AsyncProtoReader(long length = long.MaxValue) { _end = length; }
         public WireType WireType => (WireType)(_fieldHeader & 7);
-        public Task<bool> ReadNextFieldAsync()
+        public virtual Task<bool> ReadNextFieldAsync()
         {
             async Task<bool> Awaited(ValueTask<int?> task)
             {
@@ -147,14 +151,19 @@ namespace ProtoBuf
         public long Position => _position;
         long _position, _end;
         protected long End => _end;
-        public ValueTask<SubObjectToken> BeginSubObjectAsync()
+
+        protected SubObjectToken IssueSubObjectToken(int len)
+        {
+            var token = new SubObjectToken(_end, _end = _position + len);
+            ApplyDataConstraint();
+            return token;
+        }
+        public virtual ValueTask<SubObjectToken> BeginSubObjectAsync()
         {
             async ValueTask<SubObjectToken> Awaited(ValueTask<int?> task)
             {
                 int len = ValueOrEOF(await task.ConfigureAwait(false));
-                var result = new SubObjectToken(_end, _end = _position + len);
-                ApplyDataConstraint();
-                return result;
+                return IssueSubObjectToken(len);
             }
             switch (WireType)
             {
@@ -163,9 +172,7 @@ namespace ProtoBuf
                     if (task.IsCompleted)
                     {
                         int len = ValueOrEOF(task.Result);
-                        var result = new SubObjectToken(_end, _end = _position + len);
-                        ApplyDataConstraint();
-                        return AsTask(result);
+                        return AsTask(IssueSubObjectToken(len));
                     }
                     else return Awaited(task);
                 default:
@@ -184,7 +191,7 @@ namespace ProtoBuf
             }
             token = default(SubObjectToken);
         }
-        public ValueTask<int> ReadInt32Async()
+        public virtual ValueTask<int> ReadInt32Async()
         {
             async ValueTask<int> AwaitedVarint(ValueTask<int?> task) => ValueOrEOF(await task.ConfigureAwait(false));
             async ValueTask<int> AwaitedFixed32(ValueTask<uint> task) => checked((int)await task.ConfigureAwait(false));
@@ -208,8 +215,8 @@ namespace ProtoBuf
         protected static void Trace(string message) => SimpleUsage.Trace(message);
 
 
-        static readonly byte[] EmptyBytes = new byte[0];
-        public Task<bool> ReadBooleanAsync()
+        protected static readonly byte[] EmptyBytes = new byte[0];
+        public virtual Task<bool> ReadBooleanAsync()
         {
             async Task<bool> Awaited(ValueTask<int> task) => (await task.ConfigureAwait(false)) != 0;
             var val = ReadInt32Async();
@@ -218,7 +225,7 @@ namespace ProtoBuf
         protected abstract ValueTask<byte[]> ReadBytesAsync(int bytes);
         protected abstract ValueTask<int?> TryReadVarintInt32Async(bool consume = true);
 
-        public ValueTask<string> ReadStringAsync()
+        public virtual ValueTask<string> ReadStringAsync()
         {
             async ValueTask<string> Awaited(ValueTask<int?> task)
             {
@@ -237,7 +244,7 @@ namespace ProtoBuf
             Trace($"String length: {len}");
             return len == 0 ? AsTask("") : ReadStringAsync(len);
         }
-        public ValueTask<byte[]> ReadBytesAsync()
+        public virtual ValueTask<byte[]> ReadBytesAsync()
         {
             async ValueTask<byte[]> Awaited(ValueTask<int?> task)
             {
