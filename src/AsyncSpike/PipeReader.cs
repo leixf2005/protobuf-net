@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Buffers;
-using System.IO;
 using System.IO.Pipelines;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -20,6 +19,50 @@ namespace ProtoBuf
             _reader = reader;
             _closePipe = closePipe;
         }
+        
+        
+        internal override ValueTask<T> ReadSubMessageAsync<T>(IAsyncSerializer<T> serializer, T value = default)
+        {
+            async ValueTask<T> Awaited(ValueTask<(SubObjectToken Token, int Length)> task)
+            {
+                var pair = await task;
+                if (serializer is ISyncSerializer<T> sync && pair.Length >= 0 && pair.Length == _available.Length)
+                {
+                    //using (var subReader = ReadOnlyBufferReader.Create(_available, Position))
+                    //{
+                    //    value = sync.Deserialize(subReader, value);
+                    //}
+                    _available = _available.Slice(pair.Length);
+                    Advance(pair.Length);
+                }
+                else
+                {
+                    value = await serializer.DeserializeAsync(this, value);
+                }
+                EndSubObject(ref pair.Token);
+                return value;
+            }
+            {
+                var task = BeginSubObjectAsync();
+                if (task.IsCompleted)
+                {
+                    var pair = task.Result;
+                    if (serializer is ISyncSerializer<T> sync && pair.Length >= 0 && pair.Length == _available.Length)
+                    {
+                        //using (var subReader = ReadOnlyBufferReader.Create(_available, Position))
+                        //{
+                        //    value = sync.Deserialize(subReader, value);
+                        //}
+                        _available = _available.Slice(pair.Length);
+                        Advance(pair.Length);
+                        EndSubObject(ref pair.Token);
+                        return AsTask(value);
+                    }
+                }
+                return Awaited(task);
+            }
+        }
+
         protected override Task SkipBytesAsync(int pBytes)
         {
             async Task ImplAsync(int bytes)
@@ -34,7 +77,7 @@ namespace ProtoBuf
                     Advance(remove);
                 }
             }
-            if (pBytes >= checked((int)_available.Length))
+            if (pBytes <= checked((int)_available.Length))
             {
                 _available = _available.Slice(pBytes);
                 Advance(pBytes);
@@ -63,22 +106,27 @@ namespace ProtoBuf
             }
             return Task.CompletedTask;
         }
-
-        private unsafe T ReadLittleEndian<T>() where T : struct
+        internal static unsafe T ReadLittleEndian<T>(ref ReadOnlyBuffer buffer) where T : struct
         {
             T val;
-            if (_available.First.Length >= Unsafe.SizeOf<T>())
+            if (buffer.First.Length >= Unsafe.SizeOf<T>())
             {
-                val = _available.First.Span.NonPortableCast<byte, T>()[0];
+                val = buffer.First.Span.NonPortableCast<byte, T>()[0];
             }
             else
             {
                 byte* raw = stackalloc byte[Unsafe.SizeOf<T>()];
-                _available.Slice(0, Unsafe.SizeOf<T>())
-                    .CopyTo(new Span<byte>(raw, Unsafe.SizeOf<T>()));
+                buffer.Slice(0, Unsafe.SizeOf<T>())
+                                .CopyTo(new Span<byte>(raw, Unsafe.SizeOf<T>()));
                 val = Unsafe.Read<T>(raw);
             }
-            _available = _available.Slice(Unsafe.SizeOf<T>());
+            buffer = buffer.Slice(Unsafe.SizeOf<T>());
+            return val;
+        }
+
+        private T ReadLittleEndian<T>() where T : struct
+        {
+            T val = ReadLittleEndian<T>(ref _available);
             Advance(Unsafe.SizeOf<T>());
             return val;
         }
@@ -130,85 +178,101 @@ namespace ProtoBuf
             t.Wait(); // check for exception
             return AsTask(Process(bytes));
         }
-        protected override ValueTask<string> ReadStringAsync(int bytes)
+        internal unsafe static string ReadString(ref ReadOnlyBuffer source, int len)
         {
-            async ValueTask<string> Awaited(Task task, int len)
+            string s;
+            var first = source.First;
+            if (first.Length >= len)
             {
-                await task.ConfigureAwait(false);
-                return Process(len);
+                s = MemoryReader.GetUtf8String(first, len);
             }
-            unsafe string Process(int len)
+            else if (source.IsSingleSpan)
             {
-                string s;
-                var first = _available.First;
-                if (first.Length >= len)
+                return ThrowEOF<string>();
+            }
+            else
+            {
+                var decoder = Encoding.GetDecoder();
+                int bytesLeft = len;
+                var iter = source.GetEnumerator();
+                int charCount = 0;
+                while (bytesLeft > 0 && iter.MoveNext())
                 {
-                    s = MemoryReader.GetUtf8String(first, len);
+                    var buffer = iter.Current;
+                    int bytesThisBuffer = Math.Min(bytesLeft, buffer.Length);
+                    fixed (byte* ptr = &MemoryMarshal.GetReference(buffer.Span))
+                    {
+                        charCount += decoder.GetCharCount(ptr, bytesThisBuffer, false);
+                    }
+                    bytesLeft -= bytesThisBuffer;
                 }
-                else if (_available.IsSingleSpan)
+                if (bytesLeft != 0) return ThrowEOF<string>();
+                decoder.Reset();
+
+                s = new string((char)0, charCount);
+                iter = source.GetEnumerator();
+                bytesLeft = len;
+                fixed (char* c = s)
                 {
-                    throw new EndOfStreamException();
-                }
-                else
-                {
-                    var decoder = Encoding.GetDecoder();
-                    int bytesLeft = len;
-                    var iter = _available.GetEnumerator();
-                    int charCount = 0;
+                    var cPtr = c;
                     while (bytesLeft > 0 && iter.MoveNext())
                     {
                         var buffer = iter.Current;
                         int bytesThisBuffer = Math.Min(bytesLeft, buffer.Length);
                         fixed (byte* ptr = &MemoryMarshal.GetReference(buffer.Span))
                         {
-                            charCount += decoder.GetCharCount(ptr, bytesThisBuffer, false);
+                            int charsWritten = decoder.GetChars(ptr, bytesThisBuffer, cPtr, charCount, false);
+                            cPtr += charsWritten;
+                            charCount -= charsWritten;
                         }
                         bytesLeft -= bytesThisBuffer;
                     }
-                    if (bytesLeft != 0) throw new EndOfStreamException();
-                    decoder.Reset();
-
-                    s = new string((char)0, charCount);
-                    iter = _available.GetEnumerator();
-                    bytesLeft = len;
-                    fixed (char* c = s)
-                    {
-                        var cPtr = c;
-                        while (bytesLeft > 0 && iter.MoveNext())
-                        {
-                            var buffer = iter.Current;
-                            int bytesThisBuffer = Math.Min(bytesLeft, buffer.Length);
-                            fixed (byte* ptr = &MemoryMarshal.GetReference(buffer.Span))
-                            {
-                                int charsWritten = decoder.GetChars(ptr, bytesThisBuffer, cPtr, charCount, false);
-                                cPtr += charsWritten;
-                                charCount -= charsWritten;
-                            }
-                            bytesLeft -= bytesThisBuffer;
-                        }
-                        if (charCount != 0 || bytesLeft != 0) throw new EndOfStreamException();
-                    }
+                    if (charCount != 0 || bytesLeft != 0) return ThrowEOF<string>();
                 }
-                Trace($"Read string: {s}");
+            }
+            Trace($"Read string: {s}");
 
-                _available = _available.Slice(len);
+            source = source.Slice(len);
+            return s;
+        }
+        protected override ValueTask<string> ReadStringAsync(int bytes)
+        {
+            async ValueTask<string> Awaited(Task task, int len)
+            {
+                await task.ConfigureAwait(false);
+                string s = ReadString(ref _available, len);
                 Advance(len);
                 return s;
             }
 
-            var t = EnsureBufferedAsync(bytes);
-            if (!t.IsCompleted) return Awaited(t, bytes);
+            {
+                var t = EnsureBufferedAsync(bytes);
+                if (!t.IsCompleted) return Awaited(t, bytes);
 
-            t.Wait(); // check for exception
-            return AsTask(Process(bytes));
+                t.Wait(); // check for exception
+                string s = ReadString(ref _available, bytes);
+                Advance(bytes);
+                return AsTask(s);
+            }
         }
-        private static (int value, int consumed) TryPeekVarintInt32(ref ReadOnlyBuffer buffer)
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static (int value, int consumed) TryPeekVarintInt32(ref ReadOnlyBuffer buffer)
         {
             Trace($"Parsing varint from {buffer.Length} bytes...");
-            return (buffer.IsSingleSpan || buffer.First.Length >= MaxBytesForVarint)
-                ? TryPeekVarintSingleSpan(buffer.First.Span)
-                : TryPeekVarintMultiSpan(ref buffer);
+            if (buffer.IsEmpty) return (0,0);
+            var first = buffer.First.Span;
+            if (first.Length >= MaxBytesForVarint || buffer.IsSingleSpan)
+            {
+                SingleSpanPeek++;
+                return TryPeekVarintSingleSpan(first);
+            }
+            MultiSpanPeek++;
+            return TryPeekVarintMultiSpan(ref buffer);
         }
+        public static void ResetPeekCounts() => SingleSpanPeek = MultiSpanPeek = 0;
+        public static int SingleSpanPeek { get; private set; }
+        public static int MultiSpanPeek { get; private set; }
+
         internal static unsafe (int value, int consumed) TryPeekVarintSingleSpan(ReadOnlySpan<byte> span)
         {
             int len = span.Length;
@@ -300,13 +364,14 @@ namespace ProtoBuf
             // ask the underlying pipe for more data
             ValueAwaiter<ReadResult> BeginReadAsync()
             {
+                ReadCount++;
                 _reader.Advance(_available.Start, _available.End);
                 _isReading = true;
                 _available = default(ReadOnlyBuffer);
                 return _reader.ReadAsync();
             }
             // accept data from the pipe, and see whether we should ask again
-            bool EndReadCheckAskAgain(ReadResult read, long oldLen)
+            bool EndReadCheckAskAgain(ref ReadResult read, long oldLen)
             {
                 _originalAsReceived = _available = read.Buffer;
                 _isReading = false;
@@ -321,7 +386,7 @@ namespace ProtoBuf
             async Task<bool> Awaited(ValueAwaiter<ReadResult> t, long oldLen)
             {
                 ReadResult read = await t; // note: not a Task/ValueTask<T> - ConfigureAwait does not apply
-                while (EndReadCheckAskAgain(read, oldLen))
+                while (EndReadCheckAskAgain(ref read, oldLen))
                 {
                     t = BeginReadAsync();
                     read = t.IsCompleted ? t.GetResult() : await t;
@@ -345,19 +410,34 @@ namespace ProtoBuf
                     return False; // nope!
                 }
 
+                // try and do it all synchronously
                 var oldLen = _available.Length;
                 ReadResult read;
+                while(true) // try to do it all via the sync API
+                {
+                    _reader.Advance(_available.Start, _available.End);
+                    _available = default;
+                    if (!_reader.TryRead(out read)) break;
+                    ReadCount++;
+                    if (!EndReadCheckAskAgain(ref read, oldLen))
+                        return PostProcess(oldLen) ? True : False;
+
+                }
+
+                // then try the async API, but checking for sync result
                 do
                 {
                     var t = BeginReadAsync();
                     if (!t.IsCompleted) return Awaited(t, oldLen);
                     read = t.GetResult();
                 }
-                while (EndReadCheckAskAgain(read, oldLen));
+                while (EndReadCheckAskAgain(ref read, oldLen));
 
                 return PostProcess(oldLen) ? True : False;
             }
         }
+        
+        public int ReadCount { get; private set; }
         protected override void RemoveDataConstraint()
         {
             if (_available.End != _originalAsReceived.End)
@@ -401,6 +481,7 @@ namespace ProtoBuf
                 return ThrowEOF<int?>();
             }
 
+            PeekCount++;
             Task<bool> more;
             do
             {
@@ -423,6 +504,9 @@ namespace ProtoBuf
             if (_available.Length == 0) return AsTask<int?>(null);
             return ThrowEOF<ValueTask<int?>>();
         }
+
+        public int PeekCount { get; private set; }
+        
 
         public override void Dispose()
         {

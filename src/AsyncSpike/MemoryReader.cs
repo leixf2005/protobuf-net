@@ -1,21 +1,48 @@
 ﻿using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace ProtoBuf
 {
     internal sealed class MemoryReader : SyncProtoReader
     {
-        public override bool PreferSync { get; }
+
+        public override bool PreferSync => _preferSync;
         private ReadOnlyMemory<byte> _active, _original;
-        private readonly bool _useNewTextEncoder;
-        internal MemoryReader(ReadOnlyMemory<byte> buffer, bool useNewTextEncoder, bool preferSync = true) : base(buffer.Length)
+        private bool _useNewTextEncoder, _preferSync;
+
+        private static MemoryReader _last;
+        private MemoryReader() { }
+        internal static SyncProtoReader Create(ReadOnlyMemory<byte> buffer, bool useNewTextEncoder, bool preferSync = true, long position = 0)
         {
-            _active = _original = buffer;
-            _useNewTextEncoder = useNewTextEncoder;
-            PreferSync = preferSync;
+            if (buffer.Length == 0) return Null;
+            var obj = Interlocked.Exchange(ref _last, null) ?? new MemoryReader();
+            obj.Reset(position, buffer.Length);
+            obj._active = obj._original = buffer;
+            obj._useNewTextEncoder = useNewTextEncoder;
+            obj._preferSync = preferSync;
+            return obj;
         }
+        internal override T ReadSubMessage<T>(ISyncSerializer<T> serializer, T value = default)
+        {
+            var pair = BeginSubObject();
+            SkipBytes(pair.Length);
+            return value;
+        }
+        internal override ValueTask<T> ReadSubMessageAsync<T>(IAsyncSerializer<T> serializer, T value = default)
+        {
+            var pair = BeginSubObject();
+            SkipBytes(pair.Length);
+            return AsTask(value);
+        }
+        public override void Dispose()
+        {
+            _original = _active = default;
+            Interlocked.CompareExchange(ref _last, this, null);
+        }
+
         protected override void SkipBytes(int bytes)
         {
             _active = _active.Slice(bytes);

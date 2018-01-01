@@ -1,4 +1,6 @@
-﻿#if DEBUG
+﻿#define RUNACC
+
+#if DEBUG
 #define VERBOSE
 #endif
 
@@ -12,6 +14,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
+
 using Xunit;
 
 public class SimpleUsage : IDisposable
@@ -19,17 +22,154 @@ public class SimpleUsage : IDisposable
     private PipeOptions _options = new PipeOptions(new MemoryPool());
     void IDisposable.Dispose() => _options?.Pool?.Dispose();
 
+    static void SlicePerf(int LOOP, TextWriter log)
+    {
+        int Acc(ReadOnlySpan<byte> a) => a[0] ^ a[1]; // just something arbitrary
+
+        byte[] data = new byte[64 * 1024];
+        new Random(123).NextBytes(data);
+
+        log?.WriteLine($"Comparing slice performance slicing {data.Length} bytes into {data.Length / 2} slices, {LOOP} times");
+
+#if !RUNACC
+        log?.WriteLine("The individual variant results only make sense if RUNACC is defined, which: is isn't -");
+        log?.WriteLine("the interior code *didn't run at all*, so: just look at the overall timings in the categories");
+#endif
+
+
+
+
+        ReadOnlyMemory<byte> memory;
+        ReadOnlySpan<byte> span;
+        ReadOnlyBuffer rob;
+        Stopwatch watch;
+        int acc = 0;
+
+        log?.WriteLine("");
+        log?.WriteLine("Span<byte>");
+        watch = Stopwatch.StartNew();
+        for (int i = 0; i < LOOP; i++)
+        {
+            acc = 0;
+            span = data;
+            while (!span.IsEmpty)
+            {
+#if RUNACC
+                acc ^= Acc(span.Slice(0, 2));
+#endif
+                span = span.Slice(2);
+            }
+        }
+        watch.Stop();
+        log?.WriteLine($"\t=>Slice: acc={acc}, {watch.ElapsedMilliseconds}ms");
+
+        log?.WriteLine("");
+        log?.WriteLine("Memory<byte>");
+        watch = Stopwatch.StartNew();
+        for (int i = 0; i < LOOP; i++)
+        {
+            acc = 0;
+            memory = data;
+            while (!memory.IsEmpty)
+            {
+#if RUNACC
+                acc ^= Acc(memory.Span.Slice(0, 2));
+#endif
+                memory = memory.Slice(2);
+            }
+        }
+        watch.Stop();
+        log?.WriteLine($"\t=>Span=>Slice: acc={acc}, {watch.ElapsedMilliseconds}ms");
+
+        watch = Stopwatch.StartNew();
+        for (int i = 0; i < LOOP; i++)
+        {
+            acc = 0;
+            memory = data;
+            while (!memory.IsEmpty)
+            {
+#if RUNACC
+                acc ^= Acc(memory.Slice(0, 2).Span);
+#endif
+                memory = memory.Slice(2);
+            }
+        }
+        watch.Stop();
+        log?.WriteLine($"\t=>Slice=>Span: acc={acc}, {watch.ElapsedMilliseconds}ms");
+
+        log?.WriteLine("");
+        rob = new ReadOnlyBuffer(data);
+        log?.WriteLine($"ReadOnlyBuffer, {nameof(rob.IsSingleSpan)}={rob.IsSingleSpan}");
+        watch = Stopwatch.StartNew();
+        for (int i = 0; i < LOOP; i++)
+        {
+            acc = 0;
+            rob = new ReadOnlyBuffer(data);
+            while (!rob.IsEmpty)
+            {
+#if RUNACC
+                acc ^= Acc(rob.Slice(0, 2).First.Span);
+#endif
+                rob = rob.Slice(2);
+            }
+        }
+        watch.Stop();
+        log?.WriteLine($"\t=>Slice=>First=>Span: acc={acc}, {watch.ElapsedMilliseconds}ms");
+
+        watch = Stopwatch.StartNew();
+        for (int i = 0; i < LOOP; i++)
+        {
+            acc = 0;
+            rob = new ReadOnlyBuffer(data);
+            while (!rob.IsEmpty)
+            {
+#if RUNACC
+                acc ^= Acc(rob.First.Slice(0, 2).Span);
+#endif
+                rob = rob.Slice(2);
+            }
+        }
+        watch.Stop();
+        log?.WriteLine($"\t=>First=>Slice=>Span: acc={acc}, {watch.ElapsedMilliseconds}ms");
+
+        watch = Stopwatch.StartNew();
+        for (int i = 0; i < LOOP; i++)
+        {
+            acc = 0;
+            rob = new ReadOnlyBuffer(data);
+            while (!rob.IsEmpty)
+            {
+#if RUNACC
+                acc ^= Acc(rob.First.Span.Slice(0, 2));
+#endif
+                rob = rob.Slice(2);
+            }
+        }
+        watch.Stop();
+        log?.WriteLine($"\t=>First=>Span=>Slice: acc={acc}, {watch.ElapsedMilliseconds}ms");
+
+
+    }
+
     static async Task<int> Main()
     {
-        try { await Execute(); return 0; }
+        try {
+            SlicePerf(10, null);
+            SlicePerf(10000, Console.Out);
+            // await Execute();
+            return 0;
+        }
         catch (Exception ex)
         {
+            var orig = ex;
             await Console.Error.WriteLineAsync();
             while (ex != null)
             {
                 await Console.Error.WriteLineAsync($"{ex.GetType().Name}: {ex.Message}");
                 ex = ex.InnerException;
             }
+            await Console.Error.WriteLineAsync();
+            await Console.Error.WriteLineAsync(orig.StackTrace);
             return 1;
         }
     }
@@ -41,14 +181,14 @@ public class SimpleUsage : IDisposable
         {
 
             Console.WriteLine("(the number [in square brackets] will change between runs)");
-            Describe(customer, "original");
+            await DescribeAsync(new ValueTask<Customer>(customer), "original");
 
             Serializer.Serialize(ms, customer);
             Console.WriteLine($"serialized: {ms.Length} bytes");
 
             ms.Position = 0;
             var clone = Serializer.Deserialize<Customer>(ms);
-            Describe(clone, "old code, old encoder");
+            await DescribeAsync(new ValueTask<Customer>(clone), "old code, old encoder");
 
             if (!ms.TryGetBuffer(out var range))
             {
@@ -57,55 +197,31 @@ public class SimpleUsage : IDisposable
             Memory<byte> buffer = range;
 
             var task = SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, buffer, false, preferSync: false);
-            if (task.IsCompleted)
-            {
-                Console.WriteLine("completed!");
-                Describe(task.Result, "new code, old encoder (prefer async)");
-            }
-            else
-            {
-                Console.WriteLine("incomplete");
-                Describe(await task, "new code, old encoder (prefer async)");
-            }
+            await DescribeAsync(task, "new code, old encoder (prefer async)");
+
             task = SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, buffer, false, preferSync: true);
-            if (task.IsCompleted)
-            {
-                Console.WriteLine("completed!");
-                Describe(task.Result, "new code, old encoder (prefer sync)");
-            }
-            else
-            {
-                Console.WriteLine("incomplete");
-                Describe(await task, "new code, old encoder (prefer sync)");
-            }
+            await DescribeAsync(task, "new code, old encoder (prefer sync)");
 
             using (var reader = await CreatePipeReader(range))
             {
+                PipeReader.ResetPeekCounts();
                 task = SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, reader);
-                if (task.IsCompleted)
-                {
-                    Console.WriteLine("completed!");
-                    Describe(task.Result, "new code, old encoder (pipe)");
-                }
-                else
-                {
-                    Console.WriteLine("incomplete");
-                    Describe(await task, "new code, old encoder (pipe)");
-                }
+                var typed = reader as PipeReader;
+                await DescribeAsync(task, $"new code, old encoder (pipe); {typed?.ReadCount} reads, {typed?.PeekCount} peeks, {PipeReader.SingleSpanPeek} single, {PipeReader.MultiSpanPeek} multi");
             }
 
-                //task = SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, buffer, true);
-                //if (task.IsCompleted)
-                //{
-                //    Console.WriteLine("completed!");
-                //    Describe(task.Result, "new code, new encoder");
-                //}
-                //else
-                //{
-                //    Console.WriteLine("incomplete");
-                //}
+            //task = SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, buffer, true);
+            //if (task.IsCompleted)
+            //{
+            //    Console.WriteLine("completed!");
+            //    Describe(task.Result, "new code, new encoder");
+            //}
+            //else
+            //{
+            //    Console.WriteLine("incomplete");
+            //}
 
-                const int LOOP = 50000;
+            const int LOOP = 50000;
             var watch = Stopwatch.StartNew();
             for (int i = 0; i < LOOP; i++)
             {
@@ -131,16 +247,28 @@ public class SimpleUsage : IDisposable
             watch.Stop();
             Console.WriteLine($"new async code, old encoder (prefer sync): {watch.ElapsedMilliseconds}ms");
 
+
+            watch = Stopwatch.StartNew();
+            var pipes = new PipeReader[LOOP];
+            for(int i = 0; i < pipes.Length; i++)
+            {
+                pipes[i] = await CreatePipeReader(range);
+            }
+            watch.Stop();
+            Console.WriteLine($"preparing {LOOP} pipes: {watch.ElapsedMilliseconds}ms");
+
             watch = Stopwatch.StartNew();
             for (int i = 0; i < LOOP; i++)
             {
-                using (var reader = await CreatePipeReader(range))
+                using (var reader = pipes[i])
                 {
                     GC.KeepAlive(await SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, reader));
                 }
             }
             watch.Stop();
-            Console.WriteLine($"new async code, old encoder (prefer pipe): {watch.ElapsedMilliseconds}ms");
+            Console.WriteLine($"new async code, old encoder (pipe): {watch.ElapsedMilliseconds}ms");
+
+            pipes = null;
 
             //watch = Stopwatch.StartNew();
             //for (int i = 0; i < LOOP; i++)
@@ -168,9 +296,11 @@ public class SimpleUsage : IDisposable
         return pipe;
     }
 
-    private static void Describe(Customer customer, string label)
+    private static async Task DescribeAsync(ValueTask<Customer> task, string label)
     {
-        Console.WriteLine($"{label}\t{customer.Id}: {customer.Orders.Count} [{customer.GetHashCode()}]");
+        var suffix = task.IsCompleted ? "completed" : "awaited";
+        var customer = task.IsCompleted ? task.Result : await task;
+        await Console.Out.WriteLineAsync($"{label}\t{customer.Id}: {customer.Orders?.Count??-1} [{customer.GetHashCode()}] - {suffix}");
     }
 
     private static Customer InventCustomer(Random rand)
@@ -512,7 +642,7 @@ public class SimpleUsage : IDisposable
             switch (reader.FieldNumber)
             {
                 case 3:
-                    var token = await reader.BeginSubObjectAsync();
+                    var token = (await reader.BeginSubObjectAsync()).Token;
                     (value ?? Create(ref value)).C = await DeserializeTest1Async(reader, value?.C);
                     reader.EndSubObject(ref token);
                     break;

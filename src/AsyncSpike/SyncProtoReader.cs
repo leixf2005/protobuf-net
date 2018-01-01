@@ -125,8 +125,8 @@ namespace ProtoBuf
                     throw new InvalidOperationException();
             }
         }
-        public override ValueTask<SubObjectToken> BeginSubObjectAsync() => AsTask(BeginSubObject());
-        public SubObjectToken BeginSubObject()
+        internal override ValueTask<(SubObjectToken Token, int Length)> BeginSubObjectAsync() => AsTask(BeginSubObject());
+        internal (SubObjectToken Token, int Length) BeginSubObject()
         {
             switch (WireType)
             {
@@ -136,6 +136,19 @@ namespace ProtoBuf
                 default:
                     throw new InvalidOperationException();
             }
+        }
+
+        internal override ValueTask<T> ReadSubMessageAsync<T>(IAsyncSerializer<T> serializer, T value = default)
+            => PreferSync && serializer is ISyncSerializer<T> sync
+                ? AsTask(ReadSubMessage<T>(sync, value))
+                : base.ReadSubMessageAsync<T>(serializer, value);
+
+        internal virtual T ReadSubMessage<T>(ISyncSerializer<T> serializer, T value = default)
+        {
+            var tok = BeginSubObject().Token;
+            value = serializer.Deserialize(this, value);
+            EndSubObject(ref tok);
+            return value;
         }
 
         protected abstract uint ReadFixedUInt32();

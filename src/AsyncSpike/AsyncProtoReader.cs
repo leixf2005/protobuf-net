@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Buffers;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipelines;
@@ -64,8 +65,13 @@ namespace ProtoBuf
         protected abstract ValueTask<uint> ReadFixedUInt32Async();
         protected abstract ValueTask<ulong> ReadFixedUInt64Async();
 
-        public static SyncProtoReader Create(Memory<byte> buffer, bool useNewTextEncoder, bool preferSync = true) => new MemoryReader(buffer, useNewTextEncoder, preferSync);
-        public static AsyncProtoReader Create(IPipeReader pipe, bool closePipe = true, long bytes = long.MaxValue) => new PipeReader(pipe, closePipe, bytes);
+        public static SyncProtoReader Create(Memory<byte> buffer, bool useNewTextEncoder, bool preferSync = true)
+            => MemoryReader.Create(buffer, useNewTextEncoder, preferSync);
+        public static SyncProtoReader Create(ReadOnlyBuffer buffer)
+            => ReadOnlyBufferReader.Create(buffer);
+
+        public static AsyncProtoReader Create(IPipeReader pipe, bool closePipe = true, long bytes = long.MaxValue)
+            => new PipeReader(pipe, closePipe, bytes);
 
         protected abstract Task SkipBytesAsync(int bytes);
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -123,6 +129,19 @@ namespace ProtoBuf
             }
         }
 
+        internal virtual async ValueTask<T> ReadSubMessageAsync<T>(IAsyncSerializer<T> serializer, T value = default)
+        {
+            var tok = (await BeginSubObjectAsync()).Token;
+            value = await serializer.DeserializeAsync(this, value);
+            EndSubObject(ref tok);
+            return value;
+        }
+        protected virtual void Reset(long position, long end)
+        {
+            _fieldHeader = 0;
+            _position = position;
+            _end = end;
+        }
         protected void SetFieldHeader(int fieldHeader) => _fieldHeader = fieldHeader;
         int _fieldHeader;
         public int FieldNumber => _fieldHeader >> 3;
@@ -152,15 +171,15 @@ namespace ProtoBuf
         long _position, _end;
         protected long End => _end;
 
-        protected SubObjectToken IssueSubObjectToken(int len)
+        protected (SubObjectToken Token, int Length) IssueSubObjectToken(int len)
         {
             var token = new SubObjectToken(_end, _end = _position + len);
             ApplyDataConstraint();
-            return token;
+            return (token, len);
         }
-        public virtual ValueTask<SubObjectToken> BeginSubObjectAsync()
+        internal virtual ValueTask<(SubObjectToken Token, int Length)> BeginSubObjectAsync()
         {
-            async ValueTask<SubObjectToken> Awaited(ValueTask<int?> task)
+            async ValueTask<(SubObjectToken Token, int Length)> Awaited(ValueTask<int?> task)
             {
                 int len = ValueOrEOF(await task.ConfigureAwait(false));
                 return IssueSubObjectToken(len);
@@ -179,7 +198,7 @@ namespace ProtoBuf
                     throw new InvalidOperationException();
             }
         }
-        public void EndSubObject(ref SubObjectToken token)
+        internal void EndSubObject(ref SubObjectToken token)
         {
             if (token.End != _end) throw new InvalidOperationException("Sub-object ended in wrong order");
             if (token.End != _position) throw new InvalidOperationException("Sub-object not fully consumed");

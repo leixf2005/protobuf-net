@@ -23,7 +23,7 @@ namespace ProtoBuf
                 return serializer.Deserialize(reader, value);
             }
         }
-        
+
         public static ValueTask<T> DeserializeAsync<T>(this IAsyncSerializer<T> serializer, Memory<byte> buffer, bool useNewTextEncoder, T value = default(T), bool preferSync = true)
         {
             async ValueTask<T> AwaitAndDispose(AsyncProtoReader reader, ValueTask<T> task)
@@ -35,7 +35,7 @@ namespace ProtoBuf
                 try
                 {
                     reader = AsyncProtoReader.Create(buffer, useNewTextEncoder, preferSync);
-                    if(reader.PreferSync && serializer is ISyncSerializer<T> sync)
+                    if (reader.PreferSync && serializer is ISyncSerializer<T> sync)
                     {
                         return new ValueTask<T>(sync.Deserialize(reader, value));
                     }
@@ -77,6 +77,7 @@ namespace ProtoBuf
                 : DeserializeCustomerAsync(reader, value);
         }
         Customer ISyncSerializer<Customer>.Deserialize(SyncProtoReader reader, Customer value) => DeserializeCustomerSync(reader, value);
+
         static async ValueTask<Customer> DeserializeCustomerAsync(AsyncProtoReader reader, Customer value)
         {
             var id = value?.Id ?? 0;
@@ -84,36 +85,34 @@ namespace ProtoBuf
             var notes = value?.Notes ?? null;
             var marketValue = value?.MarketValue ?? 0.0;
             var orders = value?.Orders ?? null;
-            SubObjectToken tok = default(SubObjectToken);
+
             while (await reader.ReadNextFieldAsync())
             {
                 switch (reader.FieldNumber)
                 {
-                    case 1:
-                        id = await reader.ReadInt32Async();
-                        break;
-                    case 2:
-                        name = await reader.ReadStringAsync();
-                        break;
-                    case 3:
-                        notes = await reader.ReadStringAsync();
-                        break;
-                    case 4:
-                        marketValue = await reader.ReadDoubleAsync();
-                        break;
-                    case 5:
-                        if (orders == null)
-                        {
-                            if (value == null) value = new Customer();
-                            orders = value.Orders;
-                        }
-                        do
-                        {
-                            tok = await reader.BeginSubObjectAsync();
-                            orders.Add(await DeserializeOrderAsync(reader, null));
-                            reader.EndSubObject(ref tok);
-                        } while (await reader.AssertNextFieldAsync(5));
-                        break;
+                    //case 1:
+                    //    id = await reader.ReadInt32Async();
+                    //    break;
+                    //case 2:
+                    //    name = await reader.ReadStringAsync();
+                    //    break;
+                    //case 3:
+                    //    notes = await reader.ReadStringAsync();
+                    //    break;
+                    //case 4:
+                    //    marketValue = await reader.ReadDoubleAsync();
+                    //    break;
+                    //case 5:
+                    //    if (orders == null)
+                    //    {
+                    //        if (value == null) value = new Customer();
+                    //        orders = value.Orders;
+                    //    }
+                    //    do
+                    //    {
+                    //        orders.Add(await reader.ReadSubMessageAsync<Order>(Instance));
+                    //    } while (await reader.AssertNextFieldAsync(5));
+                    //    break;
                     default:
                         await reader.SkipFieldAsync();
                         break;
@@ -134,7 +133,7 @@ namespace ProtoBuf
             var notes = value?.Notes ?? null;
             var marketValue = value?.MarketValue ?? 0.0;
             var orders = value?.Orders ?? null;
-            SubObjectToken tok = default(SubObjectToken);
+            
             while (reader.ReadNextField())
             {
                 switch (reader.FieldNumber)
@@ -159,9 +158,7 @@ namespace ProtoBuf
                         }
                         do
                         {
-                            tok = reader.BeginSubObject();
-                            orders.Add(DeserializeOrderSync(reader, null));
-                            reader.EndSubObject(ref tok);
+                            orders.Add(reader.ReadSubMessage<Order>(Instance));
                         } while (reader.AssertNextField(5));
                         break;
                     default:
@@ -276,13 +273,13 @@ namespace ProtoBuf
         {
             int hash = -42;
             hash = (hash * -123124) + Id.GetHashCode();
-            hash = (hash * -123124) + Name.GetHashCode();
-            hash = (hash * -123124) + Notes.GetHashCode();
+            hash = (hash * -123124) + (Name?.GetHashCode() ?? 0);
+            hash = (hash * -123124) + (Notes?.GetHashCode() ?? 0);
             hash = (hash * -123124) + MarketValue.GetHashCode();
             hash = (hash * -123124) + Orders.Count.GetHashCode();
-            foreach(var order in Orders)
+            foreach (var order in Orders)
             {
-                hash = (hash * -123124) + order.GetHashCode();
+                hash = (hash * -123124) + (order?.GetHashCode() ?? 0);
             }
             return hash;
         }
@@ -308,10 +305,10 @@ namespace ProtoBuf
         {
             int hash = -42;
             hash = (hash * -123124) + Id.GetHashCode();
-            hash = (hash * -123124) + ProductCode.GetHashCode();
+            hash = (hash * -123124) + (ProductCode?.GetHashCode() ?? 0);
             hash = (hash * -123124) + Quantity.GetHashCode();
             hash = (hash * -123124) + UnitPrice.GetHashCode();
-            hash = (hash * -123124) + Notes.GetHashCode();
+            hash = (hash * -123124) + (Notes?.GetHashCode() ?? 0);
             return hash;
         }
         [ProtoMember(1)]
