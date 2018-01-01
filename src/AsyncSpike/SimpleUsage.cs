@@ -97,9 +97,10 @@ public class SimpleUsage : IDisposable
         watch.Stop();
         log?.WriteLine($"\t=>Slice=>Span: acc={acc}, {watch.ElapsedMilliseconds}ms");
 
-        log?.WriteLine("");
         rob = new ReadOnlyBuffer(data);
+        log?.WriteLine("");        
         log?.WriteLine($"ReadOnlyBuffer, {nameof(rob.IsSingleSpan)}={rob.IsSingleSpan}");
+
         watch = Stopwatch.StartNew();
         for (int i = 0; i < LOOP; i++)
         {
@@ -143,6 +144,44 @@ public class SimpleUsage : IDisposable
                 acc ^= Acc(rob.First.Span.Slice(0, 2));
 #endif
                 rob = rob.Slice(2);
+            }
+        }
+        watch.Stop();
+        log?.WriteLine($"\t=>First=>Span=>Slice: acc={acc}, {watch.ElapsedMilliseconds}ms");
+
+
+        rob = new ReadOnlyBuffer(data);
+        var drob = new DoubleBufferedReadOnlyBuffer(rob);
+        log?.WriteLine("");
+        log?.WriteLine($"DoubleBufferedReadOnlyBuffer, {nameof(drob.IsSingleSpan)}={drob.IsSingleSpan}");
+
+        watch = Stopwatch.StartNew();
+        for (int i = 0; i < LOOP; i++)
+        {
+            acc = 0;
+            drob = new DoubleBufferedReadOnlyBuffer(rob);
+            while (!drob.IsEmpty)
+            {
+#if RUNACC
+                acc ^= Acc(drob.First.Slice(0, 2).Span);
+#endif
+                drob = drob.Slice(2);
+            }
+        }
+        watch.Stop();
+        log?.WriteLine($"\t=>First=>Slice=>Span: acc={acc}, {watch.ElapsedMilliseconds}ms");
+
+        watch = Stopwatch.StartNew();
+        for (int i = 0; i < LOOP; i++)
+        {
+            acc = 0;
+            drob = new DoubleBufferedReadOnlyBuffer(rob);
+            while (!drob.IsEmpty)
+            {
+#if RUNACC
+                acc ^= Acc(drob.First.Span.Slice(0, 2));
+#endif
+                drob = drob.Slice(2);
             }
         }
         watch.Stop();
