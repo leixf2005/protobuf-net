@@ -9,10 +9,12 @@ namespace ProtoBuf
 {
     class ReadOnlyBufferReader : SyncProtoReader
     {
-        private ReadOnlyBuffer _buffer, _original;
+        private DoubleBufferedReadOnlyBuffer _buffer, _original;
         private static ReadOnlyBufferReader _last;
         private ReadOnlyBufferReader() {}
         internal static SyncProtoReader Create(ReadOnlyBuffer buffer, long position = 0)
+            => Create(new DoubleBufferedReadOnlyBuffer(buffer), position);
+        internal static SyncProtoReader Create(DoubleBufferedReadOnlyBuffer buffer, long position = 0)
         {
             if (buffer.Length == 0) return Null;
             if (buffer.IsSingleSpan)
@@ -21,12 +23,13 @@ namespace ProtoBuf
             }
             var obj = Interlocked.Exchange(ref _last, null) ?? new ReadOnlyBufferReader();
             obj.Reset(position, buffer.Length);
-            obj._original = obj._buffer = buffer;
+            obj._buffer = obj._original = buffer;
             return obj;
         }
         public override void Dispose()
         {
-            _original = _buffer = default;
+            _original = default;
+            _buffer = default;
             Interlocked.CompareExchange(ref _last, this, null);
         }
 
@@ -51,7 +54,7 @@ namespace ProtoBuf
         }
         protected override byte[] ReadBytes(int bytes)
         {
-            var arr = _buffer.Slice(0, bytes).ToArray();
+            var arr = _buffer.ToArray(bytes);
             _buffer = _buffer.Slice(bytes);
             Advance(bytes);
             return arr;

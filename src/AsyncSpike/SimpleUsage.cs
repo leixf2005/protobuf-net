@@ -194,8 +194,8 @@ public class SimpleUsage : IDisposable
     {
         try {
             SlicePerf(10, null);
-            SlicePerf(10000, Console.Out);
-            // await Execute();
+            // SlicePerf(10000, Console.Out);
+            await Execute();
             return 0;
         }
         catch (Exception ex)

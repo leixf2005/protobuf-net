@@ -13,7 +13,8 @@ namespace ProtoBuf
         private IPipeReader _reader;
         private readonly bool _closePipe;
         private volatile bool _isReading;
-        ReadOnlyBuffer _available, _originalAsReceived;
+        DoubleBufferedReadOnlyBuffer _available;
+        ReadOnlyBuffer _originalAsReceived;
         internal PipeReader(IPipeReader reader, bool closePipe, long bytes = long.MaxValue) : base(bytes)
         {
             _reader = reader;
@@ -28,10 +29,10 @@ namespace ProtoBuf
                 var pair = await task;
                 if (serializer is ISyncSerializer<T> sync && pair.Length >= 0 && pair.Length == _available.Length)
                 {
-                    //using (var subReader = ReadOnlyBufferReader.Create(_available, Position))
-                    //{
-                    //    value = sync.Deserialize(subReader, value);
-                    //}
+                    using (var subReader = ReadOnlyBufferReader.Create(_available, Position))
+                    {
+                        value = sync.Deserialize(subReader, value);
+                    }
                     _available = _available.Slice(pair.Length);
                     Advance(pair.Length);
                 }
@@ -49,10 +50,10 @@ namespace ProtoBuf
                     var pair = task.Result;
                     if (serializer is ISyncSerializer<T> sync && pair.Length >= 0 && pair.Length == _available.Length)
                     {
-                        //using (var subReader = ReadOnlyBufferReader.Create(_available, Position))
-                        //{
-                        //    value = sync.Deserialize(subReader, value);
-                        //}
+                        using (var subReader = ReadOnlyBufferReader.Create(_available, Position))
+                        {
+                            value = sync.Deserialize(subReader, value);
+                        }
                         _available = _available.Slice(pair.Length);
                         Advance(pair.Length);
                         EndSubObject(ref pair.Token);
@@ -106,7 +107,7 @@ namespace ProtoBuf
             }
             return Task.CompletedTask;
         }
-        internal static unsafe T ReadLittleEndian<T>(ref ReadOnlyBuffer buffer) where T : struct
+        internal static unsafe T ReadLittleEndian<T>(ref DoubleBufferedReadOnlyBuffer buffer) where T : struct
         {
             T val;
             if (buffer.First.Length >= Unsafe.SizeOf<T>())
@@ -116,8 +117,20 @@ namespace ProtoBuf
             else
             {
                 byte* raw = stackalloc byte[Unsafe.SizeOf<T>()];
-                buffer.Slice(0, Unsafe.SizeOf<T>())
-                                .CopyTo(new Span<byte>(raw, Unsafe.SizeOf<T>()));
+                var asSpan = new Span<byte>(raw, Unsafe.SizeOf<T>());
+                int count = Unsafe.SizeOf<T>();
+                var iter = buffer.GetEnumerator();
+                while(count != 0 && iter.MoveNext())
+                {
+                    ReadOnlySpan<byte> current = iter.Current.Span;
+                    if(current.Length > count)
+                    {
+                        current = current.Slice(0, count);
+                    }
+                    current.TryCopyTo(asSpan);
+                    count -= current.Length;
+                    asSpan = asSpan.Slice(current.Length);
+                }
                 val = Unsafe.Read<T>(raw);
             }
             buffer = buffer.Slice(Unsafe.SizeOf<T>());
@@ -167,7 +180,7 @@ namespace ProtoBuf
             }
             byte[] Process(int len)
             {
-                var arr = _available.Slice(0, len).ToArray();
+                var arr = _available.ToArray(len);
                 _available = _available.Slice(len);
                 Advance(len);
                 return arr;
@@ -178,7 +191,7 @@ namespace ProtoBuf
             t.Wait(); // check for exception
             return AsTask(Process(bytes));
         }
-        internal unsafe static string ReadString(ref ReadOnlyBuffer source, int len)
+        internal unsafe static string ReadString(ref DoubleBufferedReadOnlyBuffer source, int len)
         {
             string s;
             var first = source.First;
@@ -206,7 +219,10 @@ namespace ProtoBuf
                     }
                     bytesLeft -= bytesThisBuffer;
                 }
-                if (bytesLeft != 0) return ThrowEOF<string>();
+                if (bytesLeft != 0)
+                {
+                    return ThrowEOF<string>();
+                }
                 decoder.Reset();
 
                 s = new string((char)0, charCount);
@@ -256,7 +272,7 @@ namespace ProtoBuf
             }
         }
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal static (int value, int consumed) TryPeekVarintInt32(ref ReadOnlyBuffer buffer)
+        internal static (int value, int consumed) TryPeekVarintInt32(ref DoubleBufferedReadOnlyBuffer buffer)
         {
             Trace($"Parsing varint from {buffer.Length} bytes...");
             if (buffer.IsEmpty) return (0,0);
@@ -327,7 +343,7 @@ namespace ProtoBuf
                 throw new NotImplementedException("need moar pointer math");
             }
         }
-        private static unsafe (int value, int consumed) TryPeekVarintMultiSpan(ref ReadOnlyBuffer buffer)
+        private static unsafe (int value, int consumed) TryPeekVarintMultiSpan(ref DoubleBufferedReadOnlyBuffer buffer)
         {
             int value = 0;
             int consumed = 0, shift = 0;
@@ -367,13 +383,14 @@ namespace ProtoBuf
                 ReadCount++;
                 _reader.Advance(_available.Start, _available.End);
                 _isReading = true;
-                _available = default(ReadOnlyBuffer);
+                _available = default;
                 return _reader.ReadAsync();
             }
             // accept data from the pipe, and see whether we should ask again
             bool EndReadCheckAskAgain(ref ReadResult read, long oldLen)
             {
-                _originalAsReceived = _available = read.Buffer;
+                _originalAsReceived = read.Buffer;
+                _available = new DoubleBufferedReadOnlyBuffer(_originalAsReceived);
                 _isReading = false;
 
                 if (read.IsCancelled)
@@ -444,7 +461,7 @@ namespace ProtoBuf
             {
                 var wasForConsoleMessage = _available.Length;
                 // change back to the original right hand boundary
-                _available = _originalAsReceived.Slice(_available.Start);
+                _available = new DoubleBufferedReadOnlyBuffer(_originalAsReceived).Slice(_available.Start);
                 Trace($"Data constraint removed; {_available.Length} bytes available (was {wasForConsoleMessage})");
             }
         }
@@ -513,7 +530,7 @@ namespace ProtoBuf
             var reader = _reader;
             var available = _available;
             _reader = null;
-            _available = default(ReadOnlyBuffer);
+            _available = default;
             if (reader != null)
             {
                 if (_isReading)

@@ -25,18 +25,18 @@ namespace ProtoBuf
             obj._preferSync = preferSync;
             return obj;
         }
-        internal override T ReadSubMessage<T>(ISyncSerializer<T> serializer, T value = default)
-        {
-            var pair = BeginSubObject();
-            SkipBytes(pair.Length);
-            return value;
-        }
-        internal override ValueTask<T> ReadSubMessageAsync<T>(IAsyncSerializer<T> serializer, T value = default)
-        {
-            var pair = BeginSubObject();
-            SkipBytes(pair.Length);
-            return AsTask(value);
-        }
+        //internal override T ReadSubMessage<T>(ISyncSerializer<T> serializer, T value = default)
+        //{
+        //    var pair = BeginSubObject();
+        //    SkipBytes(pair.Length);
+        //    return value;
+        //}
+        //internal override ValueTask<T> ReadSubMessageAsync<T>(IAsyncSerializer<T> serializer, T value = default)
+        //{
+        //    var pair = BeginSubObject();
+        //    SkipBytes(pair.Length);
+        //    return AsTask(value);
+        //}
         public override void Dispose()
         {
             _original = _active = default;

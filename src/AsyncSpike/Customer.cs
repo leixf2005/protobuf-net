@@ -90,29 +90,29 @@ namespace ProtoBuf
             {
                 switch (reader.FieldNumber)
                 {
-                    //case 1:
-                    //    id = await reader.ReadInt32Async();
-                    //    break;
-                    //case 2:
-                    //    name = await reader.ReadStringAsync();
-                    //    break;
-                    //case 3:
-                    //    notes = await reader.ReadStringAsync();
-                    //    break;
-                    //case 4:
-                    //    marketValue = await reader.ReadDoubleAsync();
-                    //    break;
-                    //case 5:
-                    //    if (orders == null)
-                    //    {
-                    //        if (value == null) value = new Customer();
-                    //        orders = value.Orders;
-                    //    }
-                    //    do
-                    //    {
-                    //        orders.Add(await reader.ReadSubMessageAsync<Order>(Instance));
-                    //    } while (await reader.AssertNextFieldAsync(5));
-                    //    break;
+                    case 1:
+                        id = await reader.ReadInt32Async();
+                        break;
+                    case 2:
+                        name = await reader.ReadStringAsync();
+                        break;
+                    case 3:
+                        notes = await reader.ReadStringAsync();
+                        break;
+                    case 4:
+                        marketValue = await reader.ReadDoubleAsync();
+                        break;
+                    case 5:
+                        if (orders == null)
+                        {
+                            if (value == null) value = new Customer();
+                            orders = value.Orders;
+                        }
+                        do
+                        {
+                            orders.Add(await reader.ReadSubMessageAsync<Order>(Instance));
+                        } while (await reader.AssertNextFieldAsync(5));
+                        break;
                     default:
                         await reader.SkipFieldAsync();
                         break;
@@ -133,7 +133,7 @@ namespace ProtoBuf
             var notes = value?.Notes ?? null;
             var marketValue = value?.MarketValue ?? 0.0;
             var orders = value?.Orders ?? null;
-            
+
             while (reader.ReadNextField())
             {
                 switch (reader.FieldNumber)
