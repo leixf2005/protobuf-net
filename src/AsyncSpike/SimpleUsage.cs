@@ -242,7 +242,14 @@ public class SimpleUsage : IDisposable
             await DescribeAsync(new ValueTask<Customer>(Ser2Example.Instance.Deserialize<Customer>(ref buffer)), "v2 sync");
             await DescribeAsync(new ValueTask<Customer>(Ser2Example.Instance.Deserialize<Customer>(ref buffer)), "v2 sync again");
 
-            const int LOOP = 5000;
+            await DescribeAsync(new ValueTask<Customer>(AggressiveNamespace.AggressiveDeserializer.DeserializeCustomer(ref buffer)), "v2 aggressive");
+            await DescribeAsync(new ValueTask<Customer>(AggressiveNamespace.AggressiveDeserializer.DeserializeCustomer(ref buffer)), "v2 aggressive again");
+
+            // count the spans
+            int spans = CountSpans(ref buffer);
+            Console.WriteLine($"{buffer.Length} bytes, exposed as {spans} spans through the reader");
+
+            const int LOOP = 50000;
             Console.WriteLine($"Deserializing {ms.Length} bytes, {LOOP} times");
             var watch = Stopwatch.StartNew();
             for(int i = 0; i< LOOP; i++)
@@ -262,8 +269,30 @@ public class SimpleUsage : IDisposable
             watch.Stop();
 
             Console.WriteLine($"via BufferReader API: {watch.ElapsedMilliseconds}ms");
+
+            watch = Stopwatch.StartNew();
+            for (int i = 0; i < LOOP; i++)
+            {
+                GC.KeepAlive(AggressiveNamespace.AggressiveDeserializer.DeserializeCustomer(ref buffer));
+            }
+            watch.Stop();
+
+            Console.WriteLine($"via aggressive BufferReader API: {watch.ElapsedMilliseconds}ms");
         }
     }
+
+    private static int CountSpans(ref ReadOnlyBuffer buffer)
+    {
+        var reader = new BufferReader(buffer);
+        int count = 0;
+        while(!reader.End)
+        {
+            reader.Skip(reader.Span.Length - reader.Index);
+            count++;
+        }
+        return count;
+    }
+
     static async Task Execute()
     {
         var rand = new Random(1234);
