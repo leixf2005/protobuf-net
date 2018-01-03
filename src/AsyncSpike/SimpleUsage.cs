@@ -189,7 +189,6 @@ public class SimpleUsage : IDisposable
 
 
     }
-
     static async Task<int> Main()
     {
         try
@@ -217,6 +216,7 @@ public class SimpleUsage : IDisposable
     }
     static async Task ExecuteV2()
     {
+        Console.WriteLine($"Preparing data, warming up (JIT), and validating output (see [checksum])");
         var rand = new Random(1234);
         var customer = InventCustomer(rand);
         await DescribeAsync(new ValueTask<Customer>(customer), "original");
@@ -225,16 +225,44 @@ public class SimpleUsage : IDisposable
         using (var ms = new MemoryStream())
         {
             Serializer.Serialize(ms, customer);
-            if(!ms.TryGetBuffer(out range)) range = ms.ToArray();
+            if (!ms.TryGetBuffer(out range)) range = ms.ToArray();
+
+            ms.Position = 0;
+
+            await DescribeAsync(new ValueTask<Customer>(Serializer.Deserialize<Customer>(ms)), "protobuf-net");
+
+            var options = new PipeOptions(new MemoryPool());
+
+            Console.WriteLine("v2 deserialize...");
+
+            var reader = await CreateIPipeReader(range);
+            await DescribeAsync(Ser2Example.Instance.DeserializeAsync<Customer>(reader), "v2 async");
+
+            var buffer = new ReadOnlyBuffer(range.Array, range.Offset, range.Count);
+            await DescribeAsync(new ValueTask<Customer>(Ser2Example.Instance.Deserialize<Customer>(ref buffer)), "v2 sync");
+            await DescribeAsync(new ValueTask<Customer>(Ser2Example.Instance.Deserialize<Customer>(ref buffer)), "v2 sync again");
+
+            const int LOOP = 5000;
+            Console.WriteLine($"Deserializing {ms.Length} bytes, {LOOP} times");
+            var watch = Stopwatch.StartNew();
+            for(int i = 0; i< LOOP; i++)
+            {
+                ms.Position = 0;
+                GC.KeepAlive(Serializer.Deserialize<Customer>(ms));
+            }
+            watch.Stop();
+            
+            Console.WriteLine($"protobuf-net current: {watch.ElapsedMilliseconds}ms");
+            
+            watch = Stopwatch.StartNew();
+            for (int i = 0; i < LOOP; i++)
+            {
+                GC.KeepAlive(Ser2Example.Instance.Deserialize<Customer>(ref buffer));
+            }
+            watch.Stop();
+
+            Console.WriteLine($"via BufferReader API: {watch.ElapsedMilliseconds}ms");
         }
-        
-        var options = new PipeOptions(new MemoryPool());
-
-        Console.WriteLine("v2 deserialize...");
-
-        var reader = await CreateIPipeReader(range);
-        await DescribeAsync(Ser2Example.Instance.DeserializeAsync<Customer>(reader), "v2");
-       
     }
     static async Task Execute()
     {

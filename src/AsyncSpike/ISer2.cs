@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Buffers;
+using System.IO;
 using System.IO.Pipelines;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -155,6 +156,73 @@ namespace ProtoBuf
             return *(double*)(&x);
         }
 
+        //// it is *not* a mistake that this isn't "ref this"; this is intended as a peek - side-effects are local
+        //public static bool IsField(this BufferReader reader, int fieldNumber)
+        //    => checked((int)(reader.TryReadVarint().GetValueOrDefault() >> 3)) == fieldNumber;
+
+
+
+        // slices a portion of a reader out to a separate reader; note that from the caller's
+        // perspective the reader will have progressed
+        public static BufferReader Slice(ref this BufferReader reader, int start, int length)
+        {
+            if(start != 0) reader.Skip(start);
+
+            var startPos = reader.Cursor;
+            var hex = reader.GetHex(length);
+
+            // var before = reader.GetHex(length);
+            reader.Skip(length);
+            var endPos = reader.Cursor;
+
+            var rob = new ReadOnlyBuffer(startPos, endPos);
+            var result = new BufferReader(rob);
+            
+            // var after = result.GetHex(length);
+
+            return result;
+        }
+
+        private static unsafe string GetHex(this BufferReader reader, int len)
+        {
+            const string HEX = "0123456789ABCDEF";
+            var c = stackalloc char[len * 2];
+            var ptr = c;
+            int i;
+            for (i = 0; i < len; i++)
+            {
+                int val = reader.Take();
+                if (val < 0) break;
+
+                *ptr++ = HEX[val >> 4];
+                *ptr++ = HEX[val & 15];
+            }
+            return new string(c, 0, 2 * i);
+        }
+        public static (bool Result, int Bytes) HasEntireSubObject(ref this BufferReader reader, WireType wireType)
+        {
+            switch(wireType)
+            {
+                case WireType.String:
+                    var mutable = reader;
+                    var nlen = mutable.TryReadVarint().CheckedInt32();
+                    if (nlen == null) break;
+                    var bytes = nlen.GetValueOrDefault();
+                    if (mutable.HasSpan(bytes))
+                    {
+                        reader = mutable; // update to position
+                        return (true, bytes);
+                    }
+                    try {
+                        var clone = mutable;
+                        clone.Skip(bytes); // to check
+                        reader = mutable;
+                        return (true, bytes);
+                    }
+                    catch (ArgumentOutOfRangeException) { break; }
+            }
+            return (false, 0);
+        }
         public static double? TryReadDouble(ref this BufferReader reader, WireType wireType)
         {
             switch (wireType)
@@ -186,7 +254,50 @@ namespace ProtoBuf
             }
             unsafe string Slow(ref BufferReader buffer, int bytes)
             {
-                throw new NotImplementedException();
+                var decoder = Encoding.GetDecoder();
+                int bytesLeft = bytes;
+
+                var snapshot = buffer;
+                int charCount = 0;
+                while (bytesLeft > 0 && !buffer.End)
+                {
+                    var span = buffer.Span;
+                    int bytesThisSpan = Math.Min(bytesLeft, span.Length - buffer.Index);
+
+                    fixed (byte* ptr = &MemoryMarshal.GetReference(buffer.Span))
+                    {
+                        charCount += decoder.GetCharCount(ptr + buffer.Index, bytesThisSpan, false);
+                    }
+                    buffer.Skip(bytesThisSpan); // move to the next span, if one
+                    bytesLeft -= bytesThisSpan;
+                }
+                if (bytesLeft != 0) return null;
+
+                decoder.Reset();
+                buffer = snapshot;
+
+                string s = new string((char)0, charCount);
+                bytesLeft = bytes;
+                fixed (char* c = s)
+                {
+                    var cPtr = c;
+                    while (bytesLeft > 0 && !buffer.End)
+                    {
+                        var span = buffer.Span;
+                        int bytesThisSpan = Math.Min(bytesLeft, span.Length - buffer.Index);
+
+                        fixed (byte* ptr = &MemoryMarshal.GetReference(buffer.Span))
+                        {
+                            int charsWritten = decoder.GetChars(ptr + buffer.Index, bytesThisSpan, cPtr, charCount, false);
+                            cPtr += charsWritten;
+                            charCount -= charsWritten;
+                        }
+                        buffer.Skip(bytesThisSpan); // move to the next span, if one
+                        bytesLeft -= bytesThisSpan;
+                    }
+                    if (charCount != 0 || bytesLeft != 0) throw new InvalidOperationException("Something went wrong decoding a string!");
+                }
+                return s;
             }
 
             if (wireType != WireType.String) ThrowNotSupported(wireType);
@@ -196,6 +307,15 @@ namespace ProtoBuf
             int len = nlen.GetValueOrDefault();
             if (len == 0) return "";
             return reader.HasSpan(len) ? Fast(ref reader, len) : Slow(ref reader, len);
+        }
+
+        public static (int FieldNumber, WireType WireType) ReadNextField(ref this BufferReader reader)
+        {
+            var next = reader.TryReadVarint();
+            if (next == null) return default;
+
+            ulong x = next.GetValueOrDefault();
+            return (checked((int)(x >> 3)), (WireType)(int)(x & 7));
         }
         public static ulong? TryReadVarint(ref this BufferReader reader)
         {
@@ -268,6 +388,15 @@ namespace ProtoBuf
             return (status, br.ConsumedBytes);
 
         }
+        public static T Deserialize<T>(this ISer2<T> serializer, ref ReadOnlyBuffer buffer, T value = default)
+        {
+            var reader = new BufferReader(buffer);
+            var status = serializer.Deserialize(ref reader, ref value);
+            if (status == v2Result.Success && reader.End) return value;
+
+            throw new EndOfStreamException();
+        }
+
         public static async ValueTask<T> DeserializeAsync<T>(this ISer2<T> serializer, IPipeReader reader, T value = default, long maxBytes = long.MaxValue)
         {
             while (maxBytes != 0)
