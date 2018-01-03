@@ -1,4 +1,6 @@
-﻿using System.Buffers;
+﻿using System;
+using System.Buffers;
+using System.Threading.Tasks;
 
 namespace ProtoBuf
 {
@@ -9,6 +11,13 @@ namespace ProtoBuf
 
         v2Result ISer2<Customer>.Deserialize(ref BufferReader reader, ref Customer value) => Deserialize(ref reader, ref value);
         v2Result ISer2<Order>.Deserialize(ref BufferReader reader, ref Order value) => Deserialize(ref reader, ref value);
+        ValueTask<Order> ISer2<Order>.DeserializeAsync(System.IO.Pipelines.IPipeReader reader, Order value)
+            => throw new NotSupportedException();
+
+        ValueTask<Customer> ISer2<Customer>.DeserializeAsync(System.IO.Pipelines.IPipeReader reader, Customer value)
+        {
+            throw new NotImplementedException();
+        }
 
         private static v2Result Deserialize(ref BufferReader reader, ref Order value)
         {
@@ -73,14 +82,15 @@ namespace ProtoBuf
                         if (_4 == null) return v2Result.Success;
                         Create(ref value).MarketValue = _4.GetValueOrDefault();
                         break;
+                    case 5:
+                        return v2Result.SwitchToAsync;
                     default:
-                        if (!current.TrySkipField(wireType)) return v2Result.Success;
+                        if (!current.TrySkipField(wireType)) return wireType.DefaultResult();
                         break;
                 }
                 // we successfully read that field, so update the caller
                 reader = current;
             }
-
         }
     }
 }

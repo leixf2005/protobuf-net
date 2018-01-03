@@ -15,6 +15,7 @@ namespace ProtoBuf
     interface ISer2<T>
     {
         v2Result Deserialize(ref BufferReader reader, ref T value);
+        ValueTask<T> DeserializeAsync(IPipeReader reader, T value);
     }
 
     static class Ser2Extensions
@@ -22,6 +23,22 @@ namespace ProtoBuf
         static uint ThrowOverflow() => throw new OverflowException();
         static bool ThrowNotSupported(WireType wireType) => throw new NotSupportedException(wireType.ToString());
 
+        internal static v2Result DefaultResult(this WireType wireType)
+        {
+            switch(wireType)
+            {
+                case WireType.Varint:
+                case WireType.Fixed32:
+                case WireType.Fixed64:
+                    return v2Result.Success;
+                case WireType.StartGroup:
+                case WireType.String:
+                    return v2Result.SwitchToAsync;
+                default:
+                    ThrowNotSupported(wireType);
+                    return default;
+            }
+        }
         public static bool TrySkip(ref this BufferReader reader, int length)
         {
             try
