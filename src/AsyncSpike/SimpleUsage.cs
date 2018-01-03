@@ -192,10 +192,12 @@ public class SimpleUsage : IDisposable
 
     static async Task<int> Main()
     {
-        try {
-            SlicePerf(10, null);
+        try
+        {
+            // SlicePerf(10, null);
             // SlicePerf(10000, Console.Out);
-            await Execute();
+            // await Execute();
+            await ExecuteV2();
             return 0;
         }
         catch (Exception ex)
@@ -211,6 +213,28 @@ public class SimpleUsage : IDisposable
             await Console.Error.WriteLineAsync(orig.StackTrace);
             return 1;
         }
+        finally { }
+    }
+    static async Task ExecuteV2()
+    {
+        var rand = new Random(1234);
+        var customer = InventCustomer(rand);
+        await DescribeAsync(new ValueTask<Customer>(customer), "original");
+
+        ArraySegment<byte> range;
+        using (var ms = new MemoryStream())
+        {
+            Serializer.Serialize(ms, customer);
+            if(!ms.TryGetBuffer(out range)) range = ms.ToArray();
+        }
+        
+        var options = new PipeOptions(new MemoryPool());
+
+        Console.WriteLine("v2 deserialize...");
+
+        var reader = await CreateIPipeReader(range);
+        await DescribeAsync(Ser2Example.Instance.DeserializeAsync<Customer>(reader), "v2");
+       
     }
     static async Task Execute()
     {
@@ -319,6 +343,11 @@ public class SimpleUsage : IDisposable
         }
     }
 
+    private static async ValueTask<IPipeReader> CreateIPipeReader(ArraySegment<byte> range)
+    {
+        var pipe = await CreatePipe(range);
+        return pipe.Reader;
+    }
     private static async ValueTask<PipeReader> CreatePipeReader(ArraySegment<byte> range)
     {
         var pipe = await CreatePipe(range);
@@ -339,7 +368,14 @@ public class SimpleUsage : IDisposable
     {
         var suffix = task.IsCompleted ? "completed" : "awaited";
         var customer = task.IsCompleted ? task.Result : await task;
-        await Console.Out.WriteLineAsync($"{label}\t{customer.Id}: {customer.Orders?.Count??-1} [{customer.GetHashCode()}] - {suffix}");
+        if (customer == null)
+        {
+            await Console.Out.WriteLineAsync($"{label}\t(null) {suffix}");
+        }
+        else
+        {
+            await Console.Out.WriteLineAsync($"{label}\t{customer.Id}: {customer.Orders?.Count ?? -1} [{customer.GetHashCode()}] - {suffix}; {customer.Name}");
+        }
     }
 
     private static Customer InventCustomer(Random rand)
