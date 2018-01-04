@@ -4,6 +4,7 @@
 #define VERBOSE
 #endif
 
+using AggressiveNamespace;
 using ProtoBuf;
 using System;
 using System.Buffers;
@@ -242,8 +243,8 @@ public class SimpleUsage : IDisposable
             await DescribeAsync(new ValueTask<Customer>(Ser2Example.Instance.Deserialize<Customer>(ref buffer)), "v2 sync");
             await DescribeAsync(new ValueTask<Customer>(Ser2Example.Instance.Deserialize<Customer>(ref buffer)), "v2 sync again");
 
-            await DescribeAsync(new ValueTask<Customer>(AggressiveNamespace.AggressiveDeserializer.DeserializeCustomer(ref buffer)), "v2 aggressive");
-            await DescribeAsync(new ValueTask<Customer>(AggressiveNamespace.AggressiveDeserializer.DeserializeCustomer(ref buffer)), "v2 aggressive again");
+            await DescribeAsync(new ValueTask<Customer>(AggressiveDeserializer.Instance.Deserialize<Customer>(buffer)), "v2 aggressive");
+            await DescribeAsync(new ValueTask<Customer>(AggressiveDeserializer.Instance.Deserialize<Customer>(buffer)), "v2 aggressive again");
 
             // count the spans
             int spans = CountSpans(ref buffer);
@@ -273,7 +274,7 @@ public class SimpleUsage : IDisposable
             watch = Stopwatch.StartNew();
             for (int i = 0; i < LOOP; i++)
             {
-                GC.KeepAlive(AggressiveNamespace.AggressiveDeserializer.DeserializeCustomer(ref buffer));
+                GC.KeepAlive(AggressiveDeserializer.Instance.Deserialize<Customer>(buffer));
             }
             watch.Stop();
 

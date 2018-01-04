@@ -1,30 +1,32 @@
 ﻿using System;
 using System.Buffers;
 using System.IO;
+using System.IO.Pipelines;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
-using ProtoBuf;
+// import only a few specific types, to avoid extension method collisions
 using Customer = ProtoBuf.Customer;
 using Order = ProtoBuf.Order;
-// import only a few specific types, to avoid extension method collisions
 using WireType = ProtoBuf.WireType;
 
 namespace AggressiveNamespace // just to calm down some warnings
 {
-    // no holds barred, aggressive, no tentative "can I do this" melarky: just do it or die trying
-    static class AggressiveDeserializer
+    static class AggressiveDeserializerExtensions
     {
+        public static T Deserialize<T>(this IResumableDeserializer<T> serializer, ReadOnlyBuffer buffer, T value = default)
+        {
+            var ctx = SimpleCache<DeserializationContext>.Get();
+            serializer.Deserialize(buffer, ref value, ctx);
+            SimpleCache<DeserializationContext>.Recycle(ctx);
+            return value;
+        }
         static uint ThrowOverflow() => throw new OverflowException();
         static uint ThrowEOF() => throw new EndOfStreamException();
         static bool ThrowNotSupported(WireType wireType) => throw new NotSupportedException(wireType.ToString());
 
-        public static (int FieldNumber, WireType WireType) ReadNextField(ref this BufferReader reader)
-        {
-            var fieldHeader = reader.ReadVarint();
 
-            return (checked((int)(fieldHeader >> 3)), (WireType)(int)(fieldHeader & 7));
-        }
         private static bool HasSpan(ref this BufferReader reader, int bytes)
                 => reader.Span.Length >= reader.Index + bytes;
         public static ulong ReadVarint(ref this BufferReader reader)
@@ -91,7 +93,7 @@ namespace AggressiveNamespace // just to calm down some warnings
             return reader.HasSpan(10) ? Fast(ref reader) : Slow(ref reader);
         }
 
-        static void SkipField(ref this BufferReader reader, WireType wireType)
+        internal static void SkipField(ref this BufferReader reader, WireType wireType)
         {
             switch (wireType)
             {
@@ -239,88 +241,113 @@ namespace AggressiveNamespace // just to calm down some warnings
             return reader.HasSpan(len) ? Fast(ref reader, len) : Slow(ref reader, len);
         }
 
-        internal static Customer DeserializeCustomer(ref ReadOnlyBuffer buffer)
-        {
-            var reader = new BufferReader(buffer);
-            return DeserializeCustomer(ref reader);
-        }
 
-        public static Customer DeserializeCustomer(ref BufferReader reader, Customer value = null)
+        static async ValueTask<T> DeserializeAsync<T>(this IResumableDeserializer<T> serializer, IPipeReader reader, T value = default, long maxBytes = long.MaxValue, CancellationToken cancellationToken = default)
         {
-            Customer Create(ref Customer obj) => obj ?? (obj = new Customer());
+            var ctx = SimpleCache<DeserializationContext>.Get();
+            var rootFrame = ctx.Resume(serializer, value, 0, maxBytes);
 
-            while (!reader.End)
+            while (true)
             {
-                (var fieldNumber, var wireType) = reader.ReadNextField();
-HaveField:
+                var result = await reader.ReadAsync(cancellationToken);
+                if (result.IsCancelled) throw new TaskCanceledException();
+
+                var buffer = result.Buffer;
+                ctx.Execute(ref buffer);
+
+                if (result.IsCompleted && buffer.IsEmpty)
+                {
+                    SimpleCache<DeserializationContext>.Recycle(ctx);
+                    return rootFrame.Get<T>();
+                }
+            }
+        }
+    }
+    // no holds barred, aggressive, no tentative "can I do this" melarky: just do it or die trying
+    class AggressiveDeserializer : IResumableDeserializer<Order>, IResumableDeserializer<Customer>
+    {
+        public static AggressiveDeserializer Instance { get; } = new AggressiveDeserializer();
+        private AggressiveDeserializer() { }
+
+
+
+
+        void IResumableDeserializer<Customer>.Deserialize(ReadOnlyBuffer buffer, ref Customer value, DeserializationContext ctx)
+        {
+            // no inheritance or factory, so can do simple creation
+            if (value == null) value = new Customer();
+
+            var reader = new BufferReader(buffer);
+            while (true)
+            {
+                (var fieldNumber, var wireType) = ctx.ReadNextField(ref reader);
+                HaveField:
                 switch (fieldNumber)
                 {
+                    case 0:
+                        return;
                     case 1:
-                        Create(ref value).Id = reader.ReadInt32(wireType);
+                        value.Id = reader.ReadInt32(wireType);
                         break;
                     case 2:
-                        Create(ref value).Name = reader.ReadString(wireType);
+                        value.Name = reader.ReadString(wireType);
                         break;
                     case 3:
-                        Create(ref value).Notes = reader.ReadString(wireType);
+                        value.Notes = reader.ReadString(wireType);
                         break;
                     case 4:
-                        Create(ref value).MarketValue = reader.ReadDouble(wireType);
+                        value.MarketValue = reader.ReadDouble(wireType);
                         break;
                     case 5:
-                        var orders = Create(ref value).Orders;
-                        while(true)
+                        var orders = value.Orders;
+                        while (true)
                         {
-                            // we're going to assume length-prefixed here
-                            int len = checked((int)reader.ReadVarint());
-                            var from = reader.Cursor;
-                            reader.Skip(len);
-                            var subReader = new BufferReader(new ReadOnlyBuffer(from, reader.Cursor));
-                            orders.Add(DeserializeOrder(ref subReader));
+                            orders.Add(ctx.DeserializeSubItem<Order>(ref reader, Instance, fieldNumber, wireType));
 
-                            if (reader.End) break;
-                            (fieldNumber, wireType) = reader.ReadNextField();
+                            (fieldNumber, wireType) = ctx.ReadNextField(ref reader);
                             if (fieldNumber != 5) goto HaveField;
                         }
-                        break;
                     default:
                         reader.SkipField(wireType);
                         break;
                 }
             }
-            return Create(ref value);
         }
-        public static Order DeserializeOrder(ref BufferReader reader, Order value = null)
-        {
-            Order Create(ref Order obj) => obj ?? (obj = new Order());
 
-            while (!reader.End)
+        void IResumableDeserializer<Order>.Deserialize(ReadOnlyBuffer buffer, ref Order value, DeserializationContext ctx)
+        {
+            // no inheritance or factory, so can do simple creation
+            if (value == null) value = new Order();
+
+            var reader = new BufferReader(buffer);
+            while (true)
             {
-                (var fieldNumber, var wireType) = reader.ReadNextField();
+                (var fieldNumber, var wireType) = ctx.ReadNextField(ref reader);
 
                 switch (fieldNumber)
                 {
+                    case 0:
+                        return;
                     case 1:
-                        Create(ref value).Id = reader.ReadInt32(wireType);
+                        value.Id = reader.ReadInt32(wireType);
                         break;
                     case 2:
-                        Create(ref value).ProductCode = reader.ReadString(wireType);
+                        value.ProductCode = reader.ReadString(wireType);
                         break;
                     case 3:
-                        Create(ref value).Quantity = reader.ReadInt32(wireType);
+                        value.Quantity = reader.ReadInt32(wireType);
                         break;
                     case 4:
-                        Create(ref value).UnitPrice = reader.ReadDouble(wireType);
+                        value.UnitPrice = reader.ReadDouble(wireType);
                         break;
                     case 5:
-                        Create(ref value).Notes = reader.ReadString(wireType);
+                        value.Notes = reader.ReadString(wireType);
                         break;
                     default:
                         reader.SkipField(wireType);
                         break;
                 }
             }
-            return Create(ref value);
         }
     }
 }
