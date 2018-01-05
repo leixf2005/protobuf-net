@@ -2,6 +2,8 @@
 using System;
 using System.Buffers;
 using System.Collections.Generic;
+using System.Collections.Sequences;
+using System.Diagnostics;
 using System.IO;
 using System.Threading;
 
@@ -31,6 +33,8 @@ namespace AggressiveNamespace
         {
             _previous = null;
             _resume.Clear();
+            AwaitCount = 0;
+            ContinueFrom = default;
         }
         ResumeFrame _previous;
         public (int FieldNumber, WireType WireType) ReadNextField(ref BufferReader reader)
@@ -42,7 +46,7 @@ namespace AggressiveNamespace
                 return frame.FieldHeader();
             }
 
-            ConsumedBytes = reader.ConsumedBytes; // store our known-safe recovery position
+            ContinueFrom = reader.Cursor; // store our known-safe recovery position
             if (reader.End) return (0, default);
             var fieldHeader = reader.ReadVarint();
 
@@ -51,7 +55,7 @@ namespace AggressiveNamespace
             if (fieldNumber <= 0) throw new InvalidOperationException($"Invalid field number: {fieldNumber}");
             return (fieldNumber, wireType);
         }
-        internal long ConsumedBytes { get; private set; }
+        internal Position ContinueFrom { get; private set; }
 
         readonly Stack<ResumeFrame> _resume = new Stack<ResumeFrame>();
 
@@ -65,6 +69,7 @@ namespace AggressiveNamespace
                 ReadOnlyBuffer slice;
                 if (frame.MaxBytes != long.MaxValue && available > frame.MaxBytes)
                 {
+                    Console.WriteLine($"{frame.MaxBytes} remaining");
                     slice = buffer.Slice(0, frame.MaxBytes);
                 }
                 else
@@ -73,6 +78,7 @@ namespace AggressiveNamespace
                 }
                 if (frame.Execute(ref slice, this, out var consumedBytes))
                 {
+                    
                     // complete from length limit (sub-message or outer limit)
                     // or from group markers (sub-message only)
                     if (!ReferenceEquals(_resume.Pop(), frame))
@@ -82,20 +88,22 @@ namespace AggressiveNamespace
                     frame.ChangeState(ResumeFrame.ResumeState.Deserializing, ResumeFrame.ResumeState.AdvertisingFieldHeader);
                     _previous = frame; // so the frame before can extract the values
                 }
+                Console.WriteLine($"consumed {consumedBytes} bytes");
+                if (consumedBytes == 0) return false;
                 buffer = buffer.Slice(consumedBytes);
             }
             return true;
         }
         internal ResumeFrame Resume<T>(IResumableDeserializer<T> serializer, T value, long consumedBytes, long maxBytes = long.MaxValue)
         {
-            var frame = ResumeFrame.Create<T>(serializer, value, 0, default);
+            var frame = ResumeFrame.Create<T>(serializer, value, 0, default, 2, maxBytes);
             _resume.Push(frame);
             return frame;
         }
 
-        internal void ResetConsumedBytes()
+        internal void ResetConsumedBytes(Position start)
         {
-            ConsumedBytes = 0;
+            ContinueFrom = start;
         }
 
         internal T DeserializeSubItem<T>(ref BufferReader reader,
@@ -133,7 +141,7 @@ namespace AggressiveNamespace
             catch
             {
                 // incomplete object; do what we can
-                frame = ResumeFrame.Create<T>(serializer, value, fieldNumber, wireType);
+                frame = ResumeFrame.Create<T>(serializer, value, fieldNumber, wireType, 2, len);
                 _resume.Push(frame);
                 expectToFail = true;
             }
@@ -141,6 +149,9 @@ namespace AggressiveNamespace
             serializer.Deserialize(slice, ref value, this);
             if (expectToFail) throw new InvalidOperationException("I unexpectedly succeeded; this is problematic");
         }
+
+        public int AwaitCount { get; private set; }
+        internal void IncrementAwaitCount() => AwaitCount++;
     }
     interface IResumableDeserializer<T>
     {
@@ -149,11 +160,11 @@ namespace AggressiveNamespace
     abstract class ResumeFrame
     {
         internal abstract void Recycle();
-        public long MinBytes { get; }
-        public long MaxBytes { get; }
-        public static ResumeFrame Create<T>(IResumableDeserializer<T> serializer, T value, int fieldNumber, WireType wireType)
+        public long MinBytes { get; private set; }
+        public long MaxBytes { get; private set; }
+        public static ResumeFrame Create<T>(IResumableDeserializer<T> serializer, T value, int fieldNumber, WireType wireType, long minBytes, long maxBytes)
         {
-            return SimpleCache<TypedResumeFrame<T>>.Get().Init(value, serializer, fieldNumber, wireType);
+            return SimpleCache<TypedResumeFrame<T>>.Get().Init(value, serializer, fieldNumber, wireType, minBytes, maxBytes);
         }
         internal T Get<T>(int fieldNumber, WireType wireType)
         {
@@ -195,19 +206,22 @@ namespace AggressiveNamespace
             private T _value;
             private IResumableDeserializer<T> _serializer;
 
-            internal ResumeFrame Init(T value, IResumableDeserializer<T> serializer, int fieldNumber, WireType wireType)
+            internal ResumeFrame Init(T value, IResumableDeserializer<T> serializer, int fieldNumber, WireType wireType, long minBytes, long maxBytes)
             {
                 _value = value;
                 _serializer = serializer;
                 _fieldNumber = fieldNumber;
                 _wireType = wireType;
                 _state = ResumeState.Deserializing;
+                MinBytes = minBytes;
+                MaxBytes = maxBytes;
                 return this;
             }
 
             internal override bool Execute(ref ReadOnlyBuffer slice, DeserializationContext ctx, out long consumedBytes)
             {
-                ctx.ResetConsumedBytes();
+                Console.WriteLine($"Executing frame for {typeof(T).Name}...");
+                ctx.ResetConsumedBytes(slice.Start);
                 bool result;
                 try
                 {
@@ -218,8 +232,9 @@ namespace AggressiveNamespace
                 {
                     result = false;
                 }
-
-                consumedBytes = ctx.ConsumedBytes;
+                consumedBytes = new ReadOnlyBuffer(slice.Start, ctx.ContinueFrom).Length;
+                MaxBytes -= consumedBytes;
+                MinBytes = Math.Min(2, MinBytes - consumedBytes);
                 return result;
             }
         }

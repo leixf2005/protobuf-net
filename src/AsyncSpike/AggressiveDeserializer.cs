@@ -221,7 +221,7 @@ namespace AggressiveNamespace // just to calm down some warnings
 
                     fixed (byte* ptr = &MemoryMarshal.GetReference(buffer.Span))
                     {
-                        int charsWritten = decoder.GetChars(ptr + buffer.Index, bytesThisSpan, cPtr, charCount, false);
+                        int charsWritten = decoder.GetChars(ptr + buffer.Index, bytesThisSpan, cPtr, bytes - charCount, false);
                         cPtr += charsWritten;
                         charCount += charsWritten;
                     }
@@ -229,7 +229,10 @@ namespace AggressiveNamespace // just to calm down some warnings
                     bytesLeft -= bytesThisSpan;
                 }
 
-                if (bytesLeft != 0) ThrowEOF();
+                if (bytesLeft != 0)
+                {
+                    ThrowEOF();
+                }
 
                 return new string(c, 0, charCount);
             }
@@ -242,35 +245,73 @@ namespace AggressiveNamespace // just to calm down some warnings
         }
 
 
-        static async ValueTask<T> DeserializeAsync<T>(this IResumableDeserializer<T> serializer, IPipeReader reader, T value = default, long maxBytes = long.MaxValue, CancellationToken cancellationToken = default)
+        public static async ValueTask<(T Value, int AwaitCount)> DeserializeAsync<T>(this IResumableDeserializer<T> serializer, IPipeReader reader, T value = default, long maxBytes = long.MaxValue, CancellationToken cancellationToken = default)
         {
             var ctx = SimpleCache<DeserializationContext>.Get();
             var rootFrame = ctx.Resume(serializer, value, 0, maxBytes);
 
             while (true)
             {
+                ctx.IncrementAwaitCount();
+
                 var result = await reader.ReadAsync(cancellationToken);
                 if (result.IsCancelled) throw new TaskCanceledException();
 
                 var buffer = result.Buffer;
-                ctx.Execute(ref buffer);
-
+                Console.WriteLine($"Awaits: {ctx.AwaitCount}, {buffer.Length} bytes");
+                if (!ctx.Execute(ref buffer))
+                {
+                    Console.WriteLine("hih");
+                }
+                reader.Advance(buffer.Start, buffer.End);
                 if (result.IsCompleted && buffer.IsEmpty)
                 {
+                    int awaitCount = ctx.AwaitCount;
                     SimpleCache<DeserializationContext>.Recycle(ctx);
-                    return rootFrame.Get<T>();
+                    return (rootFrame.Get<T>(), awaitCount);
                 }
             }
         }
     }
     // no holds barred, aggressive, no tentative "can I do this" melarky: just do it or die trying
-    class AggressiveDeserializer : IResumableDeserializer<Order>, IResumableDeserializer<Customer>
+    class AggressiveDeserializer : IResumableDeserializer<Order>, IResumableDeserializer<Customer>,
+        IResumableDeserializer<ProtoBuf.CustomerMagicWrapper>
     {
         public static AggressiveDeserializer Instance { get; } = new AggressiveDeserializer();
         private AggressiveDeserializer() { }
 
 
+        void IResumableDeserializer<ProtoBuf.CustomerMagicWrapper>.Deserialize(ReadOnlyBuffer buffer, ref ProtoBuf.CustomerMagicWrapper value, DeserializationContext ctx)
+        {
+            // no inheritence or factory - simple init
+            if (value == null) value = new ProtoBuf.CustomerMagicWrapper();
 
+            var reader = new BufferReader(buffer);
+            while (true)
+            {
+                (var fieldNumber, var wireType) = ctx.ReadNextField(ref reader);
+                HaveField:
+                switch (fieldNumber)
+                {
+                    case 0:
+                        return;
+                    case 1:
+                        var items = value.Items;
+                        while (true)
+                        {
+                            Console.WriteLine($"adding customer...");
+                            items.Add(ctx.DeserializeSubItem<Customer>(ref reader, Instance, fieldNumber, wireType));
+
+                            (fieldNumber, wireType) = ctx.ReadNextField(ref reader);
+                            if (fieldNumber != 1) goto HaveField;
+                        }
+                    default:
+                        reader.SkipField(wireType);
+                        break;
+                }
+            }
+
+        }
 
         void IResumableDeserializer<Customer>.Deserialize(ReadOnlyBuffer buffer, ref Customer value, DeserializationContext ctx)
         {
@@ -314,6 +355,17 @@ namespace AggressiveNamespace // just to calm down some warnings
             }
         }
 
+        static long GetLength(BufferReader reader)
+        {
+            long len = 0;
+            while (!reader.End)
+            {
+                int spanLen = reader.Span.Length - reader.Index;
+                reader.Skip(spanLen);
+                len += spanLen;
+            }
+            return len;
+        }
         void IResumableDeserializer<Order>.Deserialize(ReadOnlyBuffer buffer, ref Order value, DeserializationContext ctx)
         {
             // no inheritance or factory, so can do simple creation
@@ -323,29 +375,37 @@ namespace AggressiveNamespace // just to calm down some warnings
             while (true)
             {
                 (var fieldNumber, var wireType) = ctx.ReadNextField(ref reader);
-
-                switch (fieldNumber)
+                Console.WriteLine($"Reading field {fieldNumber}, {GetLength(reader)} remaining...");
+                try
                 {
-                    case 0:
-                        return;
-                    case 1:
-                        value.Id = reader.ReadInt32(wireType);
-                        break;
-                    case 2:
-                        value.ProductCode = reader.ReadString(wireType);
-                        break;
-                    case 3:
-                        value.Quantity = reader.ReadInt32(wireType);
-                        break;
-                    case 4:
-                        value.UnitPrice = reader.ReadDouble(wireType);
-                        break;
-                    case 5:
-                        value.Notes = reader.ReadString(wireType);
-                        break;
-                    default:
-                        reader.SkipField(wireType);
-                        break;
+                    switch (fieldNumber)
+                    {
+                        case 0:
+                            return;
+                        case 1:
+                            value.Id = reader.ReadInt32(wireType);
+                            break;
+                        case 2:
+                            value.ProductCode = reader.ReadString(wireType);
+                            break;
+                        case 3:
+                            value.Quantity = reader.ReadInt32(wireType);
+                            break;
+                        case 4:
+                            value.UnitPrice = reader.ReadDouble(wireType);
+                            break;
+                        case 5:
+                            value.Notes = reader.ReadString(wireType);
+                            break;
+                        default:
+                            reader.SkipField(wireType);
+                            break;
+                    }
+                }
+                catch (EndOfStreamException)
+                {
+                    Console.WriteLine($"Failed when reading field {fieldNumber}");
+                    throw;
                 }
             }
         }

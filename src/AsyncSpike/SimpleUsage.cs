@@ -99,7 +99,7 @@ public class SimpleUsage : IDisposable
         log?.WriteLine($"\t=>Slice=>Span: acc={acc}, {watch.ElapsedMilliseconds}ms");
 
         rob = new ReadOnlyBuffer(data);
-        log?.WriteLine("");        
+        log?.WriteLine("");
         log?.WriteLine($"ReadOnlyBuffer, {nameof(rob.IsSingleSpan)}={rob.IsSingleSpan}");
 
         watch = Stopwatch.StartNew();
@@ -220,6 +220,9 @@ public class SimpleUsage : IDisposable
         Console.WriteLine($"Preparing data, warming up (JIT), and validating output (see [checksum])");
         var rand = new Random(1234);
         var customer = InventCustomer(rand);
+
+        await ExecuteBigFileWork(customer);
+
         await DescribeAsync(new ValueTask<Customer>(customer), "original");
 
         ArraySegment<byte> range;
@@ -250,18 +253,18 @@ public class SimpleUsage : IDisposable
             int spans = CountSpans(ref buffer);
             Console.WriteLine($"{buffer.Length} bytes, exposed as {spans} spans through the reader");
 
-            const int LOOP = 50000;
+            const int LOOP = 500; // 00;
             Console.WriteLine($"Deserializing {ms.Length} bytes, {LOOP} times");
             var watch = Stopwatch.StartNew();
-            for(int i = 0; i< LOOP; i++)
+            for (int i = 0; i < LOOP; i++)
             {
                 ms.Position = 0;
                 GC.KeepAlive(Serializer.Deserialize<Customer>(ms));
             }
             watch.Stop();
-            
+
             Console.WriteLine($"protobuf-net current: {watch.ElapsedMilliseconds}ms");
-            
+
             watch = Stopwatch.StartNew();
             for (int i = 0; i < LOOP; i++)
             {
@@ -286,7 +289,7 @@ public class SimpleUsage : IDisposable
     {
         var reader = new BufferReader(buffer);
         int count = 0;
-        while(!reader.End)
+        while (!reader.End)
         {
             reader.Skip(reader.Span.Length - reader.Index);
             count++;
@@ -342,7 +345,7 @@ public class SimpleUsage : IDisposable
             //    Console.WriteLine("incomplete");
             //}
 
-            const int LOOP = 50000;
+            const int LOOP = 500; // 00;
             var watch = Stopwatch.StartNew();
             for (int i = 0; i < LOOP; i++)
             {
@@ -371,7 +374,7 @@ public class SimpleUsage : IDisposable
 
             watch = Stopwatch.StartNew();
             var pipes = new PipeReader[LOOP];
-            for(int i = 0; i < pipes.Length; i++)
+            for (int i = 0; i < pipes.Length; i++)
             {
                 pipes[i] = await CreatePipeReader(range);
             }
@@ -400,7 +403,67 @@ public class SimpleUsage : IDisposable
             //Console.WriteLine($"new async code, new encoder: {watch.ElapsedMilliseconds}ms");
         }
     }
+    static async Task ExecuteBigFileWork(Customer customer)
+    {
+        const string path = "filedata.bin";
+        if (File.Exists(path))
+        {
+            Console.WriteLine($"'{path}' already exists; reusing it");
+        }
+        else
+        {
+            Console.WriteLine($"'{path}' not found; creating it...");
+            using (var file = File.Create(path))
+            {
+                for (int i = 0; i < 100; i++)
+                {
+                    Serializer.SerializeWithLengthPrefix(file, customer, PrefixStyle.Base128, 1);
+                }
+                Console.WriteLine($"Created; {file.Length} bytes");
+            }
+        }
 
+
+        using (var file = File.OpenRead(path))
+        {
+            Collect();
+            Console.WriteLine($"Deserializing with protobuf-net...");
+            var watch = Stopwatch.StartNew();
+            var magic = Serializer.Deserialize<CustomerMagicWrapper>(file);
+            watch.Stop();
+            Console.WriteLine($"Deserialized with protobuf-net; {watch.ElapsedMilliseconds}ms, chk: {magic.Items.Checksum}");
+
+            file.Position = 0;
+            Collect();
+            using (var pipe = new StreamPipeConnection(_pipeConfig, file))
+            {
+                try
+                {
+                    Console.WriteLine($"Deserializing with pipelines...");
+                    watch = Stopwatch.StartNew();
+                    var pair = await AggressiveDeserializer.Instance.DeserializeAsync<CustomerMagicWrapper>(pipe.Input);
+                    magic = pair.Value;
+                    watch.Stop();
+                    Console.WriteLine($"Deserialized with pipelines; {watch.ElapsedMilliseconds}ms, chk: {magic.Items.Checksum}; used {pair.AwaitCount} awaits");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Oops! {ex.Message}");
+                }
+            }
+
+
+        }
+
+    }
+    static void Collect()
+    {
+        for (int i = 0; i < 5; i++)
+        {
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced);
+            GC.WaitForPendingFinalizers();
+        }
+    }
     private static async ValueTask<IPipeReader> CreateIPipeReader(ArraySegment<byte> range)
     {
         var pipe = await CreatePipe(range);

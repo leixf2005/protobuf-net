@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Buffers;
+using System.Collections;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
@@ -263,6 +264,26 @@ namespace ProtoBuf
             value.UnitPrice = unitPrice;
             value.Notes = notes;
             return value;
+        }
+    }
+
+    [ProtoContract]
+    public class CustomerMagicWrapper // allows deserialization of multiple customer objects without retaining them
+    {
+        [ProtoMember(1)]
+        public CustomerMagicCollection Items { get; } = new CustomerMagicCollection();
+        static IEnumerable<Customer> None => Array.Empty<Customer>();
+        public class CustomerMagicCollection : IEnumerable<Customer>
+        {
+            public IEnumerator<Customer> GetEnumerator() => None.GetEnumerator();
+            IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+            private int checksum;
+            public void Add(Customer customer)
+            {
+                checksum = (checksum * -14315451) + (customer?.GetHashCode() ?? 0);
+            }
+            public int Checksum => checksum;
         }
     }
 
