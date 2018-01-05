@@ -22,10 +22,10 @@ namespace AggressiveNamespace
             }
         }
     }
-    class MoreDataNeededException : Exception
+    class MoreDataNeededException : EndOfStreamException
     {
-        public long MinBytes { get; }
-        public MoreDataNeededException(long minBytes = 2) { minBytes = MinBytes; }
+        public long MoreBytesNeeded { get; }
+        public MoreDataNeededException(long moreBytesNeeded) { MoreBytesNeeded = moreBytesNeeded; }
     }
     class DeserializationContext : IDisposable
     {
@@ -60,45 +60,54 @@ namespace AggressiveNamespace
 
         readonly Stack<ResumeFrame> _resume = new Stack<ResumeFrame>();
 
-        internal bool Execute(ref ReadOnlyBuffer buffer)
+        internal bool Execute(ref ReadOnlyBuffer buffer, ref long position, out long moreBytesNeeded)
         {
+            moreBytesNeeded = 0;
             while (!buffer.IsEmpty && _resume.TryPeek(out var frame))
             {
                 long available = buffer.Length;
-                if (available < frame.MinBytes) return false;
-
+                
                 ReadOnlyBuffer slice;
-                long position;
-                if (frame.End != long.MaxValue && (position = Position(buffer.Start)) + available > frame.End)
+                bool frameIsComplete = false;
+                if (frame.End != long.MaxValue && (position = Position(buffer.Start)) + available >= frame.End)
                 {
-                    Console.WriteLine($"{frame.MaxBytes} remaining");
-                    slice = buffer.Slice(0, frame.MaxBytes);
+                    frameIsComplete = true; // we have all the data, so we don't expect it to fail with more-bytes-needed 
+                    slice = buffer.Slice(0, frame.End - position);
                 }
                 else
                 {
                     slice = buffer;
                 }
-                if (frame.Execute(ref slice, this, out var consumedBytes))
+                Console.WriteLine($"{frame} executing on {slice.Length} bytes...");
+
+                ResetStart(position, slice.Start);
+                if (frame.Execute(ref slice, this, out var consumedBytes, out moreBytesNeeded))
                 {
                     
                     // complete from length limit (sub-message or outer limit)
                     // or from group markers (sub-message only)
                     if (!ReferenceEquals(_resume.Pop(), frame))
                     {
-                        throw new InvalidOperationException("Object was completed, but he wrong frame was popped; oops!");
+                        throw new InvalidOperationException("Object was completed, but the wrong frame was popped; oops!");
                     }
                     frame.ChangeState(ResumeFrame.ResumeState.Deserializing, ResumeFrame.ResumeState.AdvertisingFieldHeader);
                     _previous = frame; // so the frame before can extract the values
                 }
-                Console.WriteLine($"consumed {consumedBytes} bytes");
+                position += consumedBytes;
+
+                if(frameIsComplete && moreBytesNeeded !=0 )
+                {
+                    throw new InvalidOperationException("We should have had a complete frame, but someone is requesting more data");
+                }
                 if (consumedBytes == 0) return false;
+                Console.WriteLine($"consumed {consumedBytes} bytes; position now {position}");
                 buffer = buffer.Slice(consumedBytes);
             }
             return true;
         }
         internal ResumeFrame Resume<T>(IResumableDeserializer<T> serializer, T value, long end)
         {
-            var frame = ResumeFrame.Create<T>(serializer, value, 0, default, 2, end);
+            var frame = ResumeFrame.Create<T>(serializer, value, 0, WireType.String, end);
             _resume.Push(frame);
             return frame;
         }
@@ -107,8 +116,9 @@ namespace AggressiveNamespace
             return BatchStartPosition + new ReadOnlyBuffer(BatchStart, position).Length;
         }
         internal long BatchStartPosition { get; private set; }
-        internal void ResetStart(Position start)
+        internal void ResetStart(long position, Position start)
         {
+            BatchStartPosition = position;
             BatchStart = start;
             ContinueFrom = start;
         }
@@ -120,6 +130,7 @@ namespace AggressiveNamespace
             DeserializeSubItem(ref reader, serializer, fieldNumber, wireType, ref value);
             return value;
         }
+        private long lastPos = 0;
         internal void DeserializeSubItem<T>(ref BufferReader reader,
             IResumableDeserializer<T> serializer,
             int fieldNumber, WireType wireType, ref T value)
@@ -127,6 +138,7 @@ namespace AggressiveNamespace
             var frame = _previous;
             if (frame != null)
             {
+                Console.WriteLine($"Consuming popped '{typeof(T).Name}'");
                 value = frame.Get<T>(fieldNumber, wireType);
                 _previous.Recycle();
                 _previous = null; // and thus it was consumed!
@@ -144,12 +156,21 @@ namespace AggressiveNamespace
             {   // see if we have it all directly
                 reader.Skip(len);
                 expectToFail = false;
+
+                var debugPos = Position(from);
+                if (debugPos == 528186 || debugPos < lastPos) Debugger.Break();
+                lastPos = debugPos;
+                Console.WriteLine($"Reading '{typeof(T).Name}' without using the context stack; {len} bytes needed; {debugPos} to {Position(reader.Cursor)}");
             }
             catch
             {
                 // incomplete object; do what we can
-                frame = ResumeFrame.Create<T>(serializer, value, fieldNumber, wireType, 2, len);
+                long start = Position(from);
+                if (start < lastPos) Debugger.Break();
+                lastPos = start;
+                frame = ResumeFrame.Create<T>(serializer, value, fieldNumber, wireType, start + len);
                 _resume.Push(frame);
+                Console.WriteLine($"Reading '{typeof(T).Name}' using the context stack (incomplete data); {len} bytes needed; {start} to {frame.End}");
                 expectToFail = true;
             }
             var slice = new ReadOnlyBuffer(from, reader.Cursor);
@@ -169,11 +190,10 @@ namespace AggressiveNamespace
     abstract class ResumeFrame
     {
         internal abstract void Recycle();
-        public long MinBytes { get; private set; }
         public long End { get; private set; }
-        public static ResumeFrame Create<T>(IResumableDeserializer<T> serializer, T value, int fieldNumber, WireType wireType, long minBytes, long end)
+        public static ResumeFrame Create<T>(IResumableDeserializer<T> serializer, T value, int fieldNumber, WireType wireType, long end)
         {
-            return SimpleCache<TypedResumeFrame<T>>.Get().Init(value, serializer, fieldNumber, wireType, minBytes, end);
+            return SimpleCache<TypedResumeFrame<T>>.Get().Init(value, serializer, fieldNumber, wireType, end);
         }
         internal T Get<T>(int fieldNumber, WireType wireType)
         {
@@ -186,7 +206,7 @@ namespace AggressiveNamespace
         }
         internal T Get<T>() => ((TypedResumeFrame<T>)this).Value;
 
-        internal abstract bool Execute(ref ReadOnlyBuffer slice, DeserializationContext ctx, out long consumedBytes);
+        internal abstract bool Execute(ref ReadOnlyBuffer slice, DeserializationContext ctx, out long consumedBytes, out long moreBytesNeeded);
 
         private int _fieldNumber;
         private WireType _wireType;
@@ -209,41 +229,40 @@ namespace AggressiveNamespace
                 _value = default;
                 _serializer = default;
             }
+            public override string ToString() => $"Frame of '{typeof(T).Name}' (field {_fieldNumber}, {_wireType})";
             internal override void Recycle() => SimpleCache<TypedResumeFrame<T>>.Recycle(this);
 
             public T Value => _value;
             private T _value;
             private IResumableDeserializer<T> _serializer;
 
-            internal ResumeFrame Init(T value, IResumableDeserializer<T> serializer, int fieldNumber, WireType wireType, long minBytes, long end)
+            internal ResumeFrame Init(T value, IResumableDeserializer<T> serializer, int fieldNumber, WireType wireType, long end)
             {
                 _value = value;
                 _serializer = serializer;
                 _fieldNumber = fieldNumber;
                 _wireType = wireType;
                 _state = ResumeState.Deserializing;
-                MinBytes = minBytes;
                 End = end;
                 return this;
             }
 
-            internal override bool Execute(ref ReadOnlyBuffer slice, DeserializationContext ctx, out long consumedBytes)
+            internal override bool Execute(ref ReadOnlyBuffer slice, DeserializationContext ctx, out long consumedBytes, out long moreBytesNeeded)
             {
                 Console.WriteLine($"Executing frame for {typeof(T).Name}...");
-                ctx.ResetStart(slice.Start);
                 bool result;
+                moreBytesNeeded = 0;
                 try
                 {
                     _serializer.Deserialize(slice, ref _value, ctx);
                     result = true;
                 }
-                catch (EndOfStreamException)
+                catch (MoreDataNeededException ex)
                 {
+                    moreBytesNeeded = ex.MoreBytesNeeded;
                     result = false;
                 }
                 consumedBytes = new ReadOnlyBuffer(slice.Start, ctx.ContinueFrom).Length;
-                MaxBytes -= consumedBytes;
-                MinBytes = Math.Min(2, MinBytes - consumedBytes);
                 return result;
             }
         }

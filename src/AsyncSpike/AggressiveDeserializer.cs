@@ -18,12 +18,13 @@ namespace AggressiveNamespace // just to calm down some warnings
         public static T Deserialize<T>(this IResumableDeserializer<T> serializer, ReadOnlyBuffer buffer, T value = default)
         {
             var ctx = SimpleCache<DeserializationContext>.Get();
+            ctx.ResetStart(0, buffer.Start);
             serializer.Deserialize(buffer, ref value, ctx);
             SimpleCache<DeserializationContext>.Recycle(ctx);
             return value;
         }
         static uint ThrowOverflow() => throw new OverflowException();
-        static uint ThrowEOF() => throw new EndOfStreamException();
+        static uint ThrowEOF(long moreBytesNeeded) => throw new MoreDataNeededException(moreBytesNeeded);
         static bool ThrowNotSupported(WireType wireType) => throw new NotSupportedException(wireType.ToString());
 
 
@@ -62,7 +63,7 @@ namespace AggressiveNamespace // just to calm down some warnings
             ulong Slow(ref BufferReader buffer)
             {
                 var x = buffer.Take();
-                if (x < 0) return ThrowEOF();
+                if (x < 0) return ThrowEOF(1);
 
                 ulong val = (ulong)x;
                 if ((val & 128) == 0) return val;
@@ -71,7 +72,7 @@ namespace AggressiveNamespace // just to calm down some warnings
                 for (int i = 0; i < 8; i++)
                 {
                     x = buffer.Take();
-                    if (x < 0) return ThrowEOF();
+                    if (x < 0) return ThrowEOF(1);
                     val |= ((ulong)(x & 127)) << shift;
                     if ((x & 128) == 0)
                     {
@@ -87,7 +88,7 @@ namespace AggressiveNamespace // just to calm down some warnings
                     case 1:
                         return val | (1UL << 63);
                 }
-                if (x < 0) return ThrowEOF();
+                if (x < 0) return ThrowEOF(1);
                 return ThrowOverflow();
             }
             return reader.HasSpan(10) ? Fast(ref reader) : Slow(ref reader);
@@ -144,7 +145,7 @@ namespace AggressiveNamespace // just to calm down some warnings
             uint Slow(ref BufferReader buffer)
             {
                 int a = buffer.Take(), b = buffer.Take(), c = buffer.Take(), d = buffer.Take();
-                if (a < 0 || b < 0 || c < 0 || d < 0) return ThrowEOF();
+                if (a < 0 || b < 0 || c < 0 || d < 0) return ThrowEOF(a < 0 ? 4 : b < 0 ? 3 : c < 0 ? 2 : 1);
                 return (uint)(a | (b << 8) | (c << 16) | (d << 24));
             }
 
@@ -167,7 +168,7 @@ namespace AggressiveNamespace // just to calm down some warnings
                 int a = buffer.Take(), b = buffer.Take(), c = buffer.Take(), d = buffer.Take(),
                     e = buffer.Take(), f = buffer.Take(), g = buffer.Take(), h = buffer.Take();
                 if (a < 0 || b < 0 || c < 0 || d < 0
-                    || e < 0 || f < 0 || g < 0 || h < 0) return ThrowEOF();
+                    || e < 0 || f < 0 || g < 0 || h < 0) return ThrowEOF(a < 0 ? 8 : b < 0 ? 7 : c < 0 ? 6 : d < 0 ? 5 : e < 0 ? 4 : f < 0 ? 3 : g < 0 ? 2 : 1);
                 var lo = (uint)(a | (b << 8) | (c << 16) | (d << 24));
                 var hi = (uint)(e | (f << 8) | (g << 16) | (h << 24));
                 return (ulong)lo | ((ulong)hi) << 32;
@@ -206,7 +207,11 @@ namespace AggressiveNamespace // just to calm down some warnings
                 buffer.Skip(bytes);
                 return s;
             }
+            const int MaxStackAllocSize = 8096; // no special reason, but limit needs to be somewhere
             unsafe string Slow(ref BufferReader buffer, int bytes)
+                => bytes <= MaxStackAllocSize ? SlowStackAlloc(ref buffer, bytes) : SlowDoubleReadPreallocString(ref buffer, bytes);
+
+            unsafe string SlowStackAlloc(ref BufferReader buffer, int bytes)
             {
                 var decoder = Encoding.GetDecoder();
                 int bytesLeft = bytes, charCount = 0;
@@ -231,16 +236,24 @@ namespace AggressiveNamespace // just to calm down some warnings
 
                 if (bytesLeft != 0)
                 {
-                    ThrowEOF();
+                    ThrowEOF(bytesLeft);
                 }
 
                 return new string(c, 0, charCount);
+            }
+            unsafe string SlowDoubleReadPreallocString(ref BufferReader buffer, int bytes)
+            {
+                throw new NotImplementedException("huge string support");
+                // what this needs to do is: try to read the buffer once to compute the string length (decoder.GetCharCount),
+                // then allocate a new string('\0', charCount), then fix the string and iterate over the buffer a second time,
+                // using GetChars to write into the freshly allocated string
             }
 
             if (wireType != WireType.String) ThrowNotSupported(wireType);
 
             var len = checked((int)reader.ReadVarint());
             if (len == 0) return "";
+
             return reader.HasSpan(len) ? Fast(ref reader, len) : Slow(ref reader, len);
         }
 
@@ -248,8 +261,9 @@ namespace AggressiveNamespace // just to calm down some warnings
         public static async ValueTask<(T Value, int AwaitCount)> DeserializeAsync<T>(this IResumableDeserializer<T> serializer, IPipeReader reader, T value = default, long maxBytes = long.MaxValue, CancellationToken cancellationToken = default)
         {
             var ctx = SimpleCache<DeserializationContext>.Get();
-            var rootFrame = ctx.Resume(serializer, value, 0, maxBytes);
+            var rootFrame = ctx.Resume(serializer, value, maxBytes);
 
+            long bytesNeeded = 0, position = 0;
             while (true)
             {
                 ctx.IncrementAwaitCount();
@@ -258,14 +272,22 @@ namespace AggressiveNamespace // just to calm down some warnings
                 if (result.IsCancelled) throw new TaskCanceledException();
 
                 var buffer = result.Buffer;
+
                 Console.WriteLine($"Awaits: {ctx.AwaitCount}, {buffer.Length} bytes");
-                if (!ctx.Execute(ref buffer))
+                if (bytesNeeded != 0 && bytesNeeded > buffer.Length)
                 {
-                    Console.WriteLine("hih");
+                    Console.WriteLine($"not enough data to try deserializing; needs {bytesNeeded} bytes, has {buffer.Length}");
+                }
+                else
+                {
+                    bool madeProgress = !ctx.Execute(ref buffer, ref position, out long moreBytesNeeded);
+                    Console.WriteLine($"failed to make progress; needs {moreBytesNeeded} more bytes");
+                    bytesNeeded = buffer.Length + moreBytesNeeded;
                 }
                 reader.Advance(buffer.Start, buffer.End);
                 if (result.IsCompleted && buffer.IsEmpty)
                 {
+                    Console.WriteLine("we're done here!");
                     int awaitCount = ctx.AwaitCount;
                     SimpleCache<DeserializationContext>.Recycle(ctx);
                     return (rootFrame.Get<T>(), awaitCount);
@@ -375,37 +397,30 @@ namespace AggressiveNamespace // just to calm down some warnings
             while (true)
             {
                 (var fieldNumber, var wireType) = ctx.ReadNextField(ref reader);
-                Console.WriteLine($"Reading field {fieldNumber}, {GetLength(reader)} remaining...");
-                try
+                Console.WriteLine($"Reading field {fieldNumber} ({wireType}), {GetLength(reader)} remaining...");
+
+                switch (fieldNumber)
                 {
-                    switch (fieldNumber)
-                    {
-                        case 0:
-                            return;
-                        case 1:
-                            value.Id = reader.ReadInt32(wireType);
-                            break;
-                        case 2:
-                            value.ProductCode = reader.ReadString(wireType);
-                            break;
-                        case 3:
-                            value.Quantity = reader.ReadInt32(wireType);
-                            break;
-                        case 4:
-                            value.UnitPrice = reader.ReadDouble(wireType);
-                            break;
-                        case 5:
-                            value.Notes = reader.ReadString(wireType);
-                            break;
-                        default:
-                            reader.SkipField(wireType);
-                            break;
-                    }
-                }
-                catch (EndOfStreamException)
-                {
-                    Console.WriteLine($"Failed when reading field {fieldNumber}");
-                    throw;
+                    case 0:
+                        return;
+                    case 1:
+                        value.Id = reader.ReadInt32(wireType);
+                        break;
+                    case 2:
+                        value.ProductCode = reader.ReadString(wireType);
+                        break;
+                    case 3:
+                        value.Quantity = reader.ReadInt32(wireType);
+                        break;
+                    case 4:
+                        value.UnitPrice = reader.ReadDouble(wireType);
+                        break;
+                    case 5:
+                        value.Notes = reader.ReadString(wireType);
+                        break;
+                    default:
+                        reader.SkipField(wireType);
+                        break;
                 }
             }
         }
