@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Buffers;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Pipelines;
 using System.Runtime.InteropServices;
@@ -13,6 +14,12 @@ using WireType = ProtoBuf.WireType;
 
 namespace AggressiveNamespace // just to calm down some warnings
 {
+
+    static class Verbose
+    {
+        [Conditional("VERBOSE")]
+        public static void WriteLine(string message) => Console.WriteLine(message);
+    }
     static class AggressiveDeserializerExtensions
     {
         public static T Deserialize<T>(this IResumableDeserializer<T> serializer, ReadOnlyBuffer buffer, T value = default)
@@ -24,7 +31,10 @@ namespace AggressiveNamespace // just to calm down some warnings
             return value;
         }
         static uint ThrowOverflow() => throw new OverflowException();
-        static uint ThrowEOF(long moreBytesNeeded) => throw new MoreDataNeededException(moreBytesNeeded);
+        static uint ThrowEOF(long moreBytesNeeded, string message)
+        {
+            throw string.IsNullOrWhiteSpace(message) ? new MoreDataNeededException(moreBytesNeeded) : new MoreDataNeededException(message, moreBytesNeeded);
+        }
         static bool ThrowNotSupported(WireType wireType) => throw new NotSupportedException(wireType.ToString());
 
 
@@ -63,16 +73,16 @@ namespace AggressiveNamespace // just to calm down some warnings
             ulong Slow(ref BufferReader buffer)
             {
                 var x = buffer.Take();
-                if (x < 0) return ThrowEOF(1);
+                if (x < 0) return ThrowEOF(1, nameof(ReadVarint));
 
-                ulong val = (ulong)x;
-                if ((val & 128) == 0) return val;
+                ulong val = (ulong)(x & 127);
+                if ((x & 128) == 0) return val;
 
                 int shift = 7;
                 for (int i = 0; i < 8; i++)
                 {
                     x = buffer.Take();
-                    if (x < 0) return ThrowEOF(1);
+                    if (x < 0) return ThrowEOF(1, nameof(ReadVarint));
                     val |= ((ulong)(x & 127)) << shift;
                     if ((x & 128) == 0)
                     {
@@ -88,7 +98,7 @@ namespace AggressiveNamespace // just to calm down some warnings
                     case 1:
                         return val | (1UL << 63);
                 }
-                if (x < 0) return ThrowEOF(1);
+                if (x < 0) return ThrowEOF(1, nameof(ReadVarint));
                 return ThrowOverflow();
             }
             return reader.HasSpan(10) ? Fast(ref reader) : Slow(ref reader);
@@ -145,7 +155,7 @@ namespace AggressiveNamespace // just to calm down some warnings
             uint Slow(ref BufferReader buffer)
             {
                 int a = buffer.Take(), b = buffer.Take(), c = buffer.Take(), d = buffer.Take();
-                if (a < 0 || b < 0 || c < 0 || d < 0) return ThrowEOF(a < 0 ? 4 : b < 0 ? 3 : c < 0 ? 2 : 1);
+                if (a < 0 || b < 0 || c < 0 || d < 0) return ThrowEOF(a < 0 ? 4 : b < 0 ? 3 : c < 0 ? 2 : 1, nameof(ReadRawUInt64));
                 return (uint)(a | (b << 8) | (c << 16) | (d << 24));
             }
 
@@ -168,7 +178,7 @@ namespace AggressiveNamespace // just to calm down some warnings
                 int a = buffer.Take(), b = buffer.Take(), c = buffer.Take(), d = buffer.Take(),
                     e = buffer.Take(), f = buffer.Take(), g = buffer.Take(), h = buffer.Take();
                 if (a < 0 || b < 0 || c < 0 || d < 0
-                    || e < 0 || f < 0 || g < 0 || h < 0) return ThrowEOF(a < 0 ? 8 : b < 0 ? 7 : c < 0 ? 6 : d < 0 ? 5 : e < 0 ? 4 : f < 0 ? 3 : g < 0 ? 2 : 1);
+                    || e < 0 || f < 0 || g < 0 || h < 0) return ThrowEOF(a < 0 ? 8 : b < 0 ? 7 : c < 0 ? 6 : d < 0 ? 5 : e < 0 ? 4 : f < 0 ? 3 : g < 0 ? 2 : 1, nameof(ReadRawUInt64));
                 var lo = (uint)(a | (b << 8) | (c << 16) | (d << 24));
                 var hi = (uint)(e | (f << 8) | (g << 16) | (h << 24));
                 return (ulong)lo | ((ulong)hi) << 32;
@@ -236,7 +246,11 @@ namespace AggressiveNamespace // just to calm down some warnings
 
                 if (bytesLeft != 0)
                 {
-                    ThrowEOF(bytesLeft);
+#if DEBUG
+                    ThrowEOF(bytesLeft, $"{nameof(ReadString)}, length {bytes}");
+#else
+                    ThrowEOF(bytesLeft, nameof(ReadString));
+#endif
                 }
 
                 return new string(c, 0, charCount);
@@ -266,28 +280,32 @@ namespace AggressiveNamespace // just to calm down some warnings
             long bytesNeeded = 0, position = 0;
             while (true)
             {
-                ctx.IncrementAwaitCount();
-
                 var result = await reader.ReadAsync(cancellationToken);
+                ctx.IncrementAwaitCount();
                 if (result.IsCancelled) throw new TaskCanceledException();
-
                 var buffer = result.Buffer;
-
-                Console.WriteLine($"Awaits: {ctx.AwaitCount}, {buffer.Length} bytes");
-                if (bytesNeeded != 0 && bytesNeeded > buffer.Length)
+                try
                 {
-                    Console.WriteLine($"not enough data to try deserializing; needs {bytesNeeded} bytes, has {buffer.Length}");
+                    Verbose.WriteLine($"Awaits: {ctx.AwaitCount}, {buffer.Length} bytes");
+                    if (bytesNeeded != 0 && bytesNeeded > buffer.Length)
+                    {
+                        Verbose.WriteLine($"not enough data to try deserializing; needs {bytesNeeded} bytes, has {buffer.Length}");
+                    }
+                    else
+                    {
+                        bool madeProgress = !ctx.Execute(ref buffer, ref position, out long moreBytesNeeded);
+                        Verbose.WriteLine($"failed to make progress; needs {moreBytesNeeded} more bytes");
+                        bytesNeeded = buffer.Length + moreBytesNeeded;
+                    }
                 }
-                else
+                finally
                 {
-                    bool madeProgress = !ctx.Execute(ref buffer, ref position, out long moreBytesNeeded);
-                    Console.WriteLine($"failed to make progress; needs {moreBytesNeeded} more bytes");
-                    bytesNeeded = buffer.Length + moreBytesNeeded;
+                    reader.Advance(buffer.Start, buffer.End); // need to ensure Advance is called even upon exception
                 }
-                reader.Advance(buffer.Start, buffer.End);
+                    
                 if (result.IsCompleted && buffer.IsEmpty)
                 {
-                    Console.WriteLine("we're done here!");
+                    Verbose.WriteLine("we're done here!");
                     int awaitCount = ctx.AwaitCount;
                     SimpleCache<DeserializationContext>.Recycle(ctx);
                     return (rootFrame.Get<T>(), awaitCount);
@@ -321,7 +339,7 @@ namespace AggressiveNamespace // just to calm down some warnings
                         var items = value.Items;
                         while (true)
                         {
-                            Console.WriteLine($"adding customer...");
+                            Verbose.WriteLine($"adding customer...");
                             items.Add(ctx.DeserializeSubItem<Customer>(ref reader, Instance, fieldNumber, wireType));
 
                             (fieldNumber, wireType) = ctx.ReadNextField(ref reader);
@@ -366,7 +384,7 @@ namespace AggressiveNamespace // just to calm down some warnings
                         while (true)
                         {
                             orders.Add(ctx.DeserializeSubItem<Order>(ref reader, Instance, fieldNumber, wireType));
-
+                            Verbose.WriteLine($"[{value.Id}] now has {orders.Count} orders");
                             (fieldNumber, wireType) = ctx.ReadNextField(ref reader);
                             if (fieldNumber != 5) goto HaveField;
                         }
@@ -397,7 +415,7 @@ namespace AggressiveNamespace // just to calm down some warnings
             while (true)
             {
                 (var fieldNumber, var wireType) = ctx.ReadNextField(ref reader);
-                Console.WriteLine($"Reading field {fieldNumber} ({wireType}), {GetLength(reader)} remaining...");
+                Verbose.WriteLine($"[{ctx.Position(reader.Cursor)}] reading field {fieldNumber} ({wireType}), {GetLength(reader)} remaining...");
 
                 switch (fieldNumber)
                 {

@@ -26,6 +26,7 @@ namespace AggressiveNamespace
     {
         public long MoreBytesNeeded { get; }
         public MoreDataNeededException(long moreBytesNeeded) { MoreBytesNeeded = moreBytesNeeded; }
+        public MoreDataNeededException(string message, long moreBytesNeeded) : base(message) { MoreBytesNeeded = moreBytesNeeded; }
     }
     class DeserializationContext : IDisposable
     {
@@ -35,6 +36,7 @@ namespace AggressiveNamespace
             _resume.Clear();
             AwaitCount = 0;
             ContinueFrom = BatchStart = default;
+            _pushLock = 0;
         }
         ResumeFrame _previous;
         public (int FieldNumber, WireType WireType) ReadNextField(ref BufferReader reader)
@@ -78,12 +80,12 @@ namespace AggressiveNamespace
                 {
                     slice = buffer;
                 }
-                Console.WriteLine($"{frame} executing on {slice.Length} bytes...");
+                Verbose.WriteLine($"{frame} executing on {slice.Length} bytes from {position} to {(position + slice.Length)}; expected end: {(frame.End == long.MaxValue ? -1 : frame.End)}...");
 
                 ResetStart(position, slice.Start);
-                if (frame.Execute(ref slice, this, out var consumedBytes, out moreBytesNeeded))
+                if (frame.TryExecute(ref slice, this, out var consumedBytes, out moreBytesNeeded))
                 {
-                    
+                    Verbose.WriteLine($"Complete frame: {frame}");
                     // complete from length limit (sub-message or outer limit)
                     // or from group markers (sub-message only)
                     if (!ReferenceEquals(_resume.Pop(), frame))
@@ -93,6 +95,8 @@ namespace AggressiveNamespace
                     frame.ChangeState(ResumeFrame.ResumeState.Deserializing, ResumeFrame.ResumeState.AdvertisingFieldHeader);
                     _previous = frame; // so the frame before can extract the values
                 }
+                ShowFrames("after TryExecute");
+
                 position += consumedBytes;
 
                 if(frameIsComplete && moreBytesNeeded !=0 )
@@ -100,15 +104,27 @@ namespace AggressiveNamespace
                     throw new InvalidOperationException("We should have had a complete frame, but someone is requesting more data");
                 }
                 if (consumedBytes == 0) return false;
-                Console.WriteLine($"consumed {consumedBytes} bytes; position now {position}");
+                Verbose.WriteLine($"consumed {consumedBytes} bytes; position now {position}");
                 buffer = buffer.Slice(consumedBytes);
             }
             return true;
+        }
+        void ShowFrames(string state)
+        {
+            if (_resume.Count != 0)
+            {
+                Verbose.WriteLine($"Incomplete frames: {state}");
+                foreach (var x in _resume)
+                {
+                    Verbose.WriteLine($"\t{x}; expected end: {(x.End == long.MaxValue ? -1 : x.End)}...");
+                }
+            }
         }
         internal ResumeFrame Resume<T>(IResumableDeserializer<T> serializer, T value, long end)
         {
             var frame = ResumeFrame.Create<T>(serializer, value, 0, WireType.String, end);
             _resume.Push(frame);
+            ShowFrames("after Resume");
             return frame;
         }
         internal long Position(Position position)
@@ -130,7 +146,6 @@ namespace AggressiveNamespace
             DeserializeSubItem(ref reader, serializer, fieldNumber, wireType, ref value);
             return value;
         }
-        private long lastPos = 0;
         internal void DeserializeSubItem<T>(ref BufferReader reader,
             IResumableDeserializer<T> serializer,
             int fieldNumber, WireType wireType, ref T value)
@@ -138,46 +153,68 @@ namespace AggressiveNamespace
             var frame = _previous;
             if (frame != null)
             {
-                Console.WriteLine($"Consuming popped '{typeof(T).Name}'");
+                Verbose.WriteLine($"Consuming popped '{typeof(T).Name}'");
                 value = frame.Get<T>(fieldNumber, wireType);
                 _previous.Recycle();
                 _previous = null; // and thus it was consumed!
                 return;
             }
 
-
             // we're going to assume length-prefixed here
             if (wireType != WireType.String) throw new NotImplementedException();
             int len = checked((int)reader.ReadVarint());
 
             var from = reader.Cursor;
-            bool expectToFail;
+            bool itFits;
             try
             {   // see if we have it all directly
                 reader.Skip(len);
-                expectToFail = false;
-
-                var debugPos = Position(from);
-                if (debugPos == 528186 || debugPos < lastPos) Debugger.Break();
-                lastPos = debugPos;
-                Console.WriteLine($"Reading '{typeof(T).Name}' without using the context stack; {len} bytes needed; {debugPos} to {Position(reader.Cursor)}");
+                itFits = true;
             }
-            catch
+            catch(ArgumentOutOfRangeException)
+            {
+                itFits = false;
+            }
+            
+            if(itFits)
+            {
+                var slice = new ReadOnlyBuffer(from, reader.Cursor);
+                Verbose.WriteLine($"Reading '{typeof(T).Name}' without using the context stack; {len} bytes needed, {slice.Length} available; {Position(from)} to {Position(reader.Cursor)}");
+
+                try
+                {
+                    _pushLock++;
+                    serializer.Deserialize(slice, ref value, this);
+                    _pushLock--;
+                }
+                catch (MoreDataNeededException ex)
+                {
+                    throw new InvalidOperationException($"{typeof(T).Name} should have been fully contained, but requested {ex.MoreBytesNeeded} more bytes: {ex.Message}");
+                }
+            }
+            else
             {
                 // incomplete object; do what we can
                 long start = Position(from);
-                if (start < lastPos) Debugger.Break();
-                lastPos = start;
-                frame = ResumeFrame.Create<T>(serializer, value, fieldNumber, wireType, start + len);
-                _resume.Push(frame);
-                Console.WriteLine($"Reading '{typeof(T).Name}' using the context stack (incomplete data); {len} bytes needed; {start} to {frame.End}");
-                expectToFail = true;
-            }
-            var slice = new ReadOnlyBuffer(from, reader.Cursor);
-            serializer.Deserialize(slice, ref value, this);
-            if (expectToFail) throw new InvalidOperationException("I unexpectedly succeeded; this is problematic");
-        }
 
+                frame = ResumeFrame.Create<T>(serializer, value, fieldNumber, wireType, start + len);
+                var slice = new ReadOnlyBuffer(from, reader.Cursor);
+
+                
+                Verbose.WriteLine($"Reading '{typeof(T).Name}' using the context stack (incomplete data); {len} bytes needed, {slice.Length} available; {start} to {frame.End}");
+
+                if (_pushLock != 0)
+                {
+                    throw new InvalidOperationException($"{typeof(T).Name} should have been fully contained, but didn't seem to fit");
+                }
+                _resume.Push(frame);
+                ShowFrames("in DeserializeSubItem");
+                frame.Execute(ref slice, this);
+
+                throw new InvalidOperationException("I unexpectedly succeeded; this is embarrassing");
+            }
+        }
+        int _pushLock;
         public int AwaitCount { get; private set; }
         internal void IncrementAwaitCount() => AwaitCount++;
 
@@ -206,7 +243,8 @@ namespace AggressiveNamespace
         }
         internal T Get<T>() => ((TypedResumeFrame<T>)this).Value;
 
-        internal abstract bool Execute(ref ReadOnlyBuffer slice, DeserializationContext ctx, out long consumedBytes, out long moreBytesNeeded);
+        internal abstract void Execute(ref ReadOnlyBuffer slice, DeserializationContext ctx);
+        internal abstract bool TryExecute(ref ReadOnlyBuffer slice, DeserializationContext ctx, out long consumedBytes, out long moreBytesNeeded);
 
         private int _fieldNumber;
         private WireType _wireType;
@@ -229,7 +267,7 @@ namespace AggressiveNamespace
                 _value = default;
                 _serializer = default;
             }
-            public override string ToString() => $"Frame of '{typeof(T).Name}' (field {_fieldNumber}, {_wireType})";
+            public override string ToString() => $"Frame of '{typeof(T).Name}' (field {_fieldNumber}, {_wireType}): {_value}";
             internal override void Recycle() => SimpleCache<TypedResumeFrame<T>>.Recycle(this);
 
             public T Value => _value;
@@ -247,9 +285,21 @@ namespace AggressiveNamespace
                 return this;
             }
 
-            internal override bool Execute(ref ReadOnlyBuffer slice, DeserializationContext ctx, out long consumedBytes, out long moreBytesNeeded)
+            internal override void Execute(ref ReadOnlyBuffer slice, DeserializationContext ctx)
             {
-                Console.WriteLine($"Executing frame for {typeof(T).Name}...");
+                Verbose.WriteLine($"Executing frame for {typeof(T).Name}... [{ctx.Position(slice.Start)}-{ctx.Position(slice.End)}]");
+                try
+                {
+                    _serializer.Deserialize(slice, ref _value, ctx);
+                }
+                finally
+                {
+                    Verbose.WriteLine($"{typeof(T).Name} after execute: {_value}");
+                }
+            }
+            internal override bool TryExecute(ref ReadOnlyBuffer slice, DeserializationContext ctx, out long consumedBytes, out long moreBytesNeeded)
+            {
+                Verbose.WriteLine($"Executing frame for {typeof(T).Name}... [{ctx.Position(slice.Start)}-{ctx.Position(slice.End)}]");
                 bool result;
                 moreBytesNeeded = 0;
                 try
@@ -262,6 +312,7 @@ namespace AggressiveNamespace
                     moreBytesNeeded = ex.MoreBytesNeeded;
                     result = false;
                 }
+                Verbose.WriteLine($"{typeof(T).Name} after execute: {_value}");
                 consumedBytes = new ReadOnlyBuffer(slice.Start, ctx.ContinueFrom).Length;
                 return result;
             }

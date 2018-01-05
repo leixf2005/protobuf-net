@@ -221,7 +221,8 @@ public class SimpleUsage : IDisposable
         var rand = new Random(1234);
         var customer = InventCustomer(rand);
 
-        await ExecuteBigFileWork(customer);
+        await ExecuteBigFileWork(customer, 1, null); // for JIT etc
+        await ExecuteBigFileWork(customer, 10, Console.Out);
 
         await DescribeAsync(new ValueTask<Customer>(customer), "original");
 
@@ -403,59 +404,154 @@ public class SimpleUsage : IDisposable
             //Console.WriteLine($"new async code, new encoder: {watch.ElapsedMilliseconds}ms");
         }
     }
-    static async Task ExecuteBigFileWork(Customer customer)
+    static async Task ExecuteBigFileWork(Customer customer, int loopCount, TextWriter output)
     {
         const string path = "filedata.bin";
         if (File.Exists(path))
         {
-            Console.WriteLine($"'{path}' already exists; reusing it");
+            output?.WriteLine($"'{path}' already exists; reusing it");
         }
         else
         {
-            Console.WriteLine($"'{path}' not found; creating it...");
+            Console.WriteLine($"'{path}' not found; creating it..."); // not an error that this uses Console
+            const int CUSTOMER_COUNT = 250;
             using (var file = File.Create(path))
             {
-                for (int i = 0; i < 100; i++)
+                for (int i = 0; i < CUSTOMER_COUNT; i++)
                 {
                     Serializer.SerializeWithLengthPrefix(file, customer, PrefixStyle.Base128, 1);
                 }
-                Console.WriteLine($"Created; {file.Length} bytes");
+                Console.WriteLine($"Created; {file.Length} bytes"); // not an error that this uses Console
             }
         }
 
+        // this was me annotating the data to understand a bug
+        //
+        //using (var log = File.CreateText("crawl.txt"))
+        //using (var file = File.OpenRead(path))
+        //using(var reader = new ProtoReader(file, null, null))
+        //{
+        //    CrawlCustomerWrapper(reader, log);
+        //}
 
         using (var file = File.OpenRead(path))
         {
-            Collect();
-            Console.WriteLine($"Deserializing with protobuf-net...");
-            var watch = Stopwatch.StartNew();
-            var magic = Serializer.Deserialize<CustomerMagicWrapper>(file);
-            watch.Stop();
-            Console.WriteLine($"Deserialized with protobuf-net; {watch.ElapsedMilliseconds}ms, chk: {magic.Items.Checksum}");
+            output?.WriteLine($"File data: {file.Length} bytes");
 
-            file.Position = 0;
-            Collect();
-            using (var pipe = new StreamPipeConnection(_pipeConfig, file))
+            for (int i = 0; i < loopCount; i++)
             {
-                try
+                Stopwatch watch;
+
+                file.Position = 0;
+                Collect();
+
+
+                watch = Stopwatch.StartNew();
+                var magic = Serializer.Deserialize<CustomerMagicWrapper>(file);
+                watch.Stop();
+                output?.WriteLine($"Deserialized with protobuf-net; {watch.ElapsedMilliseconds}ms, chk: {magic}");
+
+                file.Position = 0;
+                Collect();
+                using (var pipe = new StreamPipeConnection(_pipeConfig, file))
                 {
-                    Console.WriteLine($"Deserializing with pipelines...");
-                    watch = Stopwatch.StartNew();
-                    var pair = await AggressiveDeserializer.Instance.DeserializeAsync<CustomerMagicWrapper>(pipe.Input);
-                    magic = pair.Value;
-                    watch.Stop();
-                    Console.WriteLine($"Deserialized with pipelines; {watch.ElapsedMilliseconds}ms, chk: {magic.Items.Checksum}; used {pair.AwaitCount} awaits");
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Oops! {ex.Message}");
+                    //var obj = new CustomerMagicWrapper();
+                    //try
+                    //{
+                        watch = Stopwatch.StartNew();
+                        var pair = await AggressiveDeserializer.Instance.DeserializeAsync<CustomerMagicWrapper>(pipe.Input); //, obj);
+                        watch.Stop();
+                        output?.WriteLine($"Deserialized with pipelines; {watch.ElapsedMilliseconds}ms, chk: {pair.Value}; used {pair.AwaitCount} awaits");
+                    //}
+                    //catch (Exception ex)
+                    //{
+                    //    Console.WriteLine($"Oops! {ex.Message}; after: {obj.Items.ToString()}");
+                    //}
                 }
             }
-
-
         }
 
     }
+
+    private static void CrawlCustomerWrapper(ProtoReader reader, TextWriter output)
+    {
+        int field;
+        while((field = reader.ReadFieldHeader()) > 0)
+        {
+            switch(field)
+            {
+                case 1:
+                    output.WriteLine($"[{reader.Position}] Customer");
+                    var tok = ProtoReader.StartSubItem(reader);
+                    CrawlCustomer(reader, output);
+                    ProtoReader.EndSubItem(tok, reader);
+                    break;
+                default:
+                    throw new InvalidOperationException();
+            }
+        }
+    }
+
+    private static void CrawlCustomer(ProtoReader reader, TextWriter output)
+    {
+        int field;
+        while ((field = reader.ReadFieldHeader()) > 0)
+        {
+            switch (field)
+            {
+                case 1:
+                    output.WriteLine($"[{reader.Position}]\tId={reader.ReadInt32()}");
+                    break;
+                case 2:
+                    output.WriteLine($"[{reader.Position}]\tName={reader.ReadString()}");
+                    break;
+                case 3:
+                    output.WriteLine($"[{reader.Position}]\tNotes={reader.ReadString()}");
+                    break;
+                case 4:
+                    output.WriteLine($"[{reader.Position}]\tMarketValue={reader.ReadDouble()}");
+                    break;
+                case 5:
+                    output.WriteLine($"[{reader.Position}]\tOrder");
+
+                    var tok = ProtoReader.StartSubItem(reader);
+                    CrawlOrder(reader, output);
+                    ProtoReader.EndSubItem(tok, reader);
+                    break;
+                default:
+                    throw new InvalidOperationException();
+            }
+        }
+    }
+
+    private static void CrawlOrder(ProtoReader reader, TextWriter output)
+    {
+        int field;
+        while ((field = reader.ReadFieldHeader()) > 0)
+        {
+            switch (field)
+            {
+                case 1:
+                    output.WriteLine($"[{reader.Position}]\t\tId={reader.ReadInt32()}");
+                    break;
+                case 2:
+                    output.WriteLine($"[{reader.Position}]\t\tProductCode={reader.ReadString()}");
+                    break;
+                case 3:
+                    output.WriteLine($"[{reader.Position}]\t\tQuantity={reader.ReadInt32()}");
+                    break;
+                case 4:
+                    output.WriteLine($"[{reader.Position}]\t\tUnitPrice={reader.ReadDouble()}");
+                    break;
+                case 5:
+                    output.WriteLine($"[{reader.Position}]\t\tNotes={reader.ReadString()}");
+                    break;
+                default:
+                    throw new InvalidOperationException();
+            }
+        }
+    }
+
     static void Collect()
     {
         for (int i = 0; i < 5; i++)

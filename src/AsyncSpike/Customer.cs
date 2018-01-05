@@ -273,23 +273,40 @@ namespace ProtoBuf
         [ProtoMember(1)]
         public CustomerMagicCollection Items { get; } = new CustomerMagicCollection();
         static IEnumerable<Customer> None => Array.Empty<Customer>();
+
+        public override string ToString() => Items.ToString();
+
         public class CustomerMagicCollection : IEnumerable<Customer>
         {
             public IEnumerator<Customer> GetEnumerator() => None.GetEnumerator();
             IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
-            private int checksum;
+            public int CustomerCount { get; private set; }
+            public int OrderCount { get; private set; }
             public void Add(Customer customer)
             {
-                checksum = (checksum * -14315451) + (customer?.GetHashCode() ?? 0);
+                if (customer != null)
+                {
+                    CustomerCount++;
+                    OrderCount += customer.Orders.Count;
+                    if(customer.Orders.Count != 40)
+                    {
+                        throw new InvalidOperationException("huh?");
+                    }
+                }
+#if DEBUG
+                Checksum = (Checksum * -14315451) + (customer?.GetHashCode() ?? 0);
+#endif
             }
-            public int Checksum => checksum;
+            public override string ToString() => $"{CustomerCount} customers, {OrderCount} orders, chk: {Checksum}";
+            public int Checksum { get; private set; }
         }
     }
 
     [ProtoContract]
     public class Customer
     {
+        public override string ToString() => Id.ToString();
         public override int GetHashCode()
         {
             int hash = -42;
@@ -322,6 +339,7 @@ namespace ProtoBuf
     [ProtoContract]
     public class Order
     {
+        public override string ToString() => Id.ToString();
         public override int GetHashCode()
         {
             int hash = -42;
