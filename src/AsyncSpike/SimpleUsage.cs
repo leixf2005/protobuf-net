@@ -221,6 +221,9 @@ public class SimpleUsage : IDisposable
         var rand = new Random(1234);
         var customer = InventCustomer(rand);
 
+        ExecuteBigArrayWork(customer, 1, null);
+        ExecuteBigArrayWork(customer, 10, Console.Out);
+            
         await ExecuteBigFileWork(customer, 1, null); // for JIT etc
         await ExecuteBigFileWork(customer, 10, Console.Out);
 
@@ -402,6 +405,67 @@ public class SimpleUsage : IDisposable
             //}
             //watch.Stop();
             //Console.WriteLine($"new async code, new encoder: {watch.ElapsedMilliseconds}ms");
+        }
+    }
+
+    static void ExecuteBigArrayWork(Customer customer, int loopCount, TextWriter output)
+    {
+        using (var ms = new MemoryStream())
+        {
+            const int CUSTOMER_COUNT = 250;
+            Serializer.SerializeWithLengthPrefix(ms, customer, PrefixStyle.Base128, 1);
+            if (!ms.TryGetBuffer(out var segment)) segment = new ArraySegment<byte>(ms.ToArray());
+
+            // now just clone it
+            for (int i = 1; i < CUSTOMER_COUNT; i++)
+            {
+                ms.Write(segment.Array, segment.Offset, segment.Count);
+            }
+
+            // and get the final composite
+            if (!ms.TryGetBuffer(out segment)) segment = new ArraySegment<byte>(ms.ToArray());
+
+            const int REPEATS_PER_TIMING = 5;
+            output?.WriteLine($"Memory data: {segment.Count} bytes; each timing is {REPEATS_PER_TIMING} repeats");
+
+            var buffer = new ReadOnlyBuffer(segment.Array, segment.Offset, segment.Count);
+
+            for (int i = 0; i < loopCount; i++)
+            {
+                Stopwatch watch;
+                CustomerMagicWrapper magic = default;
+
+                
+                Collect();
+                
+                watch = Stopwatch.StartNew();
+                for (int j = 0; j < REPEATS_PER_TIMING; j++)
+                {
+                    ms.Position = 0;
+                    magic = Serializer.Deserialize<CustomerMagicWrapper>(ms);
+                }
+                watch.Stop();
+                output?.WriteLine($"Deserialized with protobuf-net; {watch.ElapsedMilliseconds}ms, chk: {magic}");
+
+                
+                Collect();
+                
+                //var obj = new CustomerMagicWrapper();
+                //try
+                //{
+                watch = Stopwatch.StartNew();
+                for (int j = 0; j < REPEATS_PER_TIMING; j++)
+                {
+                    magic = AggressiveDeserializer.Instance.Deserialize<CustomerMagicWrapper>(buffer); //, obj);
+                }
+                watch.Stop();
+                output?.WriteLine($"Deserialized with BufferReader; {watch.ElapsedMilliseconds}ms, chk: {magic}");
+                //}
+                //catch (Exception ex)
+                //{
+                //    Console.WriteLine($"Oops! {ex.Message}; after: {obj.Items.ToString()}");
+                //}
+            }
         }
     }
     static async Task ExecuteBigFileWork(Customer customer, int loopCount, TextWriter output)
