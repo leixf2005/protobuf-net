@@ -257,7 +257,7 @@ public class SimpleUsage : IDisposable
             int spans = CountSpans(ref buffer);
             Console.WriteLine($"{buffer.Length} bytes, exposed as {spans} spans through the reader");
 
-            const int LOOP = 500; // 00;
+            const int LOOP = 50000; // 00;
             Console.WriteLine($"Deserializing {ms.Length} bytes, {LOOP} times");
             var watch = Stopwatch.StartNew();
             for (int i = 0; i < LOOP; i++)

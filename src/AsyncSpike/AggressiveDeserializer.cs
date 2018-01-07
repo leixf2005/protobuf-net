@@ -155,7 +155,7 @@ namespace AggressiveNamespace // just to calm down some warnings
             uint Slow(ref BufferReader buffer)
             {
                 int a = buffer.Take(), b = buffer.Take(), c = buffer.Take(), d = buffer.Take();
-                if (a < 0 || b < 0 || c < 0 || d < 0) return ThrowEOF(a < 0 ? 4 : b < 0 ? 3 : c < 0 ? 2 : 1, nameof(ReadRawUInt64));
+                if ((a | b | c | d) < 0) return ThrowEOF(a < 0 ? 4 : b < 0 ? 3 : c < 0 ? 2 : 1, nameof(ReadRawUInt64));
                 return (uint)(a | (b << 8) | (c << 16) | (d << 24));
             }
 
@@ -167,6 +167,7 @@ namespace AggressiveNamespace // just to calm down some warnings
             {
                 int index = buffer.Index;
                 var span = buffer.Span;
+                
                 var lo = (uint)(span[index++] | (span[index++] << 8) | (span[index++] << 16) | (span[index++] << 24));
                 var hi = (uint)(span[index++] | (span[index++] << 8) | (span[index++] << 16) | (span[index] << 24));
                 buffer.Skip(8);
@@ -177,8 +178,7 @@ namespace AggressiveNamespace // just to calm down some warnings
             {
                 int a = buffer.Take(), b = buffer.Take(), c = buffer.Take(), d = buffer.Take(),
                     e = buffer.Take(), f = buffer.Take(), g = buffer.Take(), h = buffer.Take();
-                if (a < 0 || b < 0 || c < 0 || d < 0
-                    || e < 0 || f < 0 || g < 0 || h < 0) return ThrowEOF(a < 0 ? 8 : b < 0 ? 7 : c < 0 ? 6 : d < 0 ? 5 : e < 0 ? 4 : f < 0 ? 3 : g < 0 ? 2 : 1, nameof(ReadRawUInt64));
+                if ((a | b | c | d | e | f | g | h) < 0) return ThrowEOF(a < 0 ? 8 : b < 0 ? 7 : c < 0 ? 6 : d < 0 ? 5 : e < 0 ? 4 : f < 0 ? 3 : g < 0 ? 2 : 1, nameof(ReadRawUInt64));
                 var lo = (uint)(a | (b << 8) | (c << 16) | (d << 24));
                 var hi = (uint)(e | (f << 8) | (g << 16) | (h << 24));
                 return (ulong)lo | ((ulong)hi) << 32;
@@ -193,18 +193,19 @@ namespace AggressiveNamespace // just to calm down some warnings
                 case WireType.Varint:
                     return (long)reader.ReadVarint();
                 case WireType.Fixed32:
-                    return reader.ReadRawUInt32().ToSingle();
+                    return BitConverter.Int32BitsToSingle((int)reader.ReadRawUInt32());
                 case WireType.Fixed64:
-                    return reader.ReadRawUInt64().ToDouble();
+                    return BitConverter.Int64BitsToDouble((long)reader.ReadRawUInt64());
                 default:
                     ThrowNotSupported(wireType);
                     return default;
             }
         }
-        private static unsafe float ToSingle(this uint value) => *(float*)&value;
-        private static unsafe double ToDouble(this ulong value) => *(double*)&value;
-
+        
         static readonly Encoding Encoding = Encoding.UTF8;
+        [ThreadStatic]
+        static Decoder _decoder;
+        static Decoder Decoder => _decoder ?? (_decoder = Encoding.GetDecoder());
         public static string ReadString(ref this BufferReader reader, WireType wireType)
         {
             unsafe string Fast(ref BufferReader buffer, int bytes)
@@ -223,7 +224,8 @@ namespace AggressiveNamespace // just to calm down some warnings
 
             unsafe string SlowStackAlloc(ref BufferReader buffer, int bytes)
             {
-                var decoder = Encoding.GetDecoder();
+                var decoder = Decoder;
+                decoder.Reset();
                 int bytesLeft = bytes, charCount = 0;
 
                 var c = stackalloc char[bytes]; // good enough for now
@@ -302,7 +304,7 @@ namespace AggressiveNamespace // just to calm down some warnings
                 {
                     reader.Advance(buffer.Start, buffer.End); // need to ensure Advance is called even upon exception
                 }
-                    
+
                 if (result.IsCompleted && buffer.IsEmpty)
                 {
                     Verbose.WriteLine("we're done here!");
