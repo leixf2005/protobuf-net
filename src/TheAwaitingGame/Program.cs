@@ -9,6 +9,9 @@ using BenchmarkDotNet.Jobs;
 using MemoryDiagnoser = BenchmarkDotNet.Diagnosers.MemoryDiagnoser;
 using BenchmarkDotNet.Validators;
 using BenchmarkDotNet.Columns;
+using System.IO;
+using System.Buffers;
+using AggressiveNamespace;
 
 namespace TheAwaitingGame
 {
@@ -41,55 +44,81 @@ namespace TheAwaitingGame
 
     public class Benchmarker
     {
-        static OrderBook _book;
+        static ProtoBuf.Customer _customer;
+        static byte[] _blob;
         public Benchmarker()
         {
             // touch the static field to ensure .cctor has run
-            GC.KeepAlive(_book);
+            GC.KeepAlive(_customer);
         }
         static Benchmarker()
         {
             var rand = new Random(12345);
+            _customer = SimpleUsage.InventCustomer(rand);
 
-            var book = new OrderBook();
-            for (int i = 0; i < 50; i++)
-            {
-                var order = new Order();
-                int lines = rand.Next(1, 10);
-                for (int j = 0; j < lines; j++)
-                {
-                    order.Lines.Add(new OrderLine
-                    {
-                        Quantity = rand.Next(1, 20),
-                        UnitPrice = 0.01M * rand.Next(1, 5000)
-                    });
-                }
-                book.Orders.Add(order);
-            }
-            _book = book;
+            var ms = new MemoryStream();
+            ProtoBuf.Serializer.Serialize(ms, _customer);
+            _blob = ms.ToArray();
+            //var book = new OrderBook();
+            //for (int i = 0; i < 50; i++)
+            //{
+            //    var order = new Order();
+            //    int lines = rand.Next(1, 10);
+            //    for (int j = 0; j < lines; j++)
+            //    {
+            //        order.Lines.Add(new OrderLine
+            //        {
+            //            Quantity = rand.Next(1, 20),
+            //            UnitPrice = 0.01M * rand.Next(1, 5000)
+            //        });
+            //    }
+            //    book.Orders.Add(order);
+            //}
+            //_book = book;
 
-            int baseline = _book.GetTotalWorthInt32Sync(5);
-            Check(baseline, _book.GetTotalWorthTaskInt32AwaitAsync(5));
-            Check(baseline, _book.GetTotalWorthTaskInt32ManualCompletedAsync(5));
-            Check(baseline, _book.GetTotalWorthTaskInt32ManualCompletedSuccessfullyAsync(5));
-            Check(baseline, _book.GetTotalWorthValueTaskInt32AwaitAsync(5));
-            Check(baseline, _book.GetTotalWorthValueTaskInt32ManualCompletedAsync(5));
-            Check(baseline, _book.GetTotalWorthValueTaskInt32ManualCompletedSuccessfullyAsync(5));
+            //int baseline = _book.GetTotalWorthInt32Sync(5);
+            //Check(baseline, _book.GetTotalWorthTaskInt32AwaitAsync(5));
+            //Check(baseline, _book.GetTotalWorthTaskInt32ManualCompletedAsync(5));
+            //Check(baseline, _book.GetTotalWorthTaskInt32ManualCompletedSuccessfullyAsync(5));
+            //Check(baseline, _book.GetTotalWorthValueTaskInt32AwaitAsync(5));
+            //Check(baseline, _book.GetTotalWorthValueTaskInt32ManualCompletedAsync(5));
+            //Check(baseline, _book.GetTotalWorthValueTaskInt32ManualCompletedSuccessfullyAsync(5));
         }
 
-        private static void Check(int baseline, ValueTask<int> task)
-        {
-            if (task.IsCompleted && task.Result != baseline)
-                throw new InvalidOperationException("Baseline check failed");
-        }
+        //private static void Check(int baseline, ValueTask<int> task)
+        //{
+        //    if (task.IsCompleted && task.Result != baseline)
+        //        throw new InvalidOperationException("Baseline check failed");
+        //}
 
-        private static void Check(int baseline, Task<int> task)
-        {
-            if (task.IsCompleted && task.Result != baseline)
-                throw new InvalidOperationException("Baseline check failed");
-        }
+        //private static void Check(int baseline, Task<int> task)
+        //{
+        //    if (task.IsCompleted && task.Result != baseline)
+        //        throw new InvalidOperationException("Baseline check failed");
+        //}
 
         const int REPEATS_PER_ITEM = 250;
+
+        [Benchmark(OperationsPerInvoke = REPEATS_PER_ITEM)]
+        public void DeserializeWithStream()
+        {
+            var stream = new MemoryStream(_blob);
+            for(int i  = 0; i < REPEATS_PER_ITEM; i++)
+            {
+                stream.Position = 0;
+                GC.KeepAlive(ProtoBuf.Serializer.Deserialize<ProtoBuf.Customer>(stream));
+            }
+        }
+
+        [Benchmark(OperationsPerInvoke = REPEATS_PER_ITEM)]
+        public void DeserializeWithBuffer()
+        {
+            var buffer = new ReadOnlyBuffer(_blob);
+            for (int i = 0; i < REPEATS_PER_ITEM; i++)
+            {
+                GC.KeepAlive(AggressiveDeserializer.Instance.Deserialize<ProtoBuf.Customer>(buffer));
+            }
+        }
 
 #if OLDER_BENCHMARKS
         [Benchmark(OperationsPerInvoke = REPEATS_PER_ITEM)]
@@ -125,7 +154,7 @@ namespace TheAwaitingGame
         [Benchmark(OperationsPerInvoke = REPEATS_PER_ITEM)]
         public ValueTask<double> ValueTaskDoubleAsync() => _book.GetTotalWorthValueTaskDoubleAsync(REPEATS_PER_ITEM);
 
-#endif
+
         [Benchmark(OperationsPerInvoke = REPEATS_PER_ITEM, Description = "int/await/task")]
         public Task<int> TaskInt32AwaitAsync() => _book.GetTotalWorthTaskInt32AwaitAsync(REPEATS_PER_ITEM);
 
@@ -145,6 +174,8 @@ namespace TheAwaitingGame
 
         [Benchmark(OperationsPerInvoke = REPEATS_PER_ITEM, Description = "int/sync", Baseline = true)]
         public int TaskInt32Sync() => _book.GetTotalWorthInt32Sync(REPEATS_PER_ITEM);
+
+#endif
     }
 
     public static class ValueTaskExtensions

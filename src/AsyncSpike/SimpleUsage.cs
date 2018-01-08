@@ -1,7 +1,7 @@
 ﻿#define RUNACC
 
 #if DEBUG
-#define VERBOSE
+// #define VERBOSE
 #endif
 
 using AggressiveNamespace;
@@ -659,7 +659,7 @@ public class SimpleUsage : IDisposable
         }
     }
 
-    private static Customer InventCustomer(Random rand)
+    public static Customer InventCustomer(Random rand)
     {
         var c = new Customer
         {

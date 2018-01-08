@@ -1,8 +1,13 @@
-﻿using System;
+﻿#if DEBUG
+// #define VERBOSE
+#endif
+
+using System;
 using System.Buffers;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipelines;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -20,12 +25,12 @@ namespace AggressiveNamespace // just to calm down some warnings
         [Conditional("VERBOSE")]
         public static void WriteLine(string message) => Console.WriteLine(message);
     }
-    static class AggressiveDeserializerExtensions
+    public static class AggressiveDeserializerExtensions
     {
         public static T Deserialize<T>(this IResumableDeserializer<T> serializer, ReadOnlyBuffer buffer, T value = default)
         {
             var ctx = SimpleCache<DeserializationContext>.Get();
-            ctx.ResetStart(0, buffer.Start);
+            ctx.SetOrigin(buffer);
             serializer.Deserialize(buffer, ref value, ctx);
             SimpleCache<DeserializationContext>.Recycle(ctx);
             return value;
@@ -37,9 +42,10 @@ namespace AggressiveNamespace // just to calm down some warnings
         }
         static bool ThrowNotSupported(WireType wireType) => throw new NotSupportedException(wireType.ToString());
 
-
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static bool HasSpan(ref this BufferReader reader, int bytes)
                 => reader.Span.Length >= reader.Index + bytes;
+
         public static ulong ReadVarint(ref this BufferReader reader)
         {
             ulong Fast(ref BufferReader buffer)
@@ -133,15 +139,15 @@ namespace AggressiveNamespace // just to calm down some warnings
                 case WireType.Varint:
                     return checked((int)(unchecked((long)reader.ReadVarint())));
                 case WireType.Fixed32:
-                    return (int)reader.ReadRawUInt32();
+                    return (int)ReadRawUInt32(ref reader);
                 case WireType.Fixed64:
-                    return checked((int)(unchecked((long)reader.ReadRawUInt64())));
+                    return checked((int)(unchecked((long)ReadRawUInt64(ref reader))));
                 default:
                     ThrowNotSupported(wireType);
                     return default;
             }
         }
-        private static uint ReadRawUInt32(ref this BufferReader reader)
+        private static uint ReadRawUInt32(ref BufferReader reader)
         {
             uint Fast(ref BufferReader buffer)
             {
@@ -161,7 +167,7 @@ namespace AggressiveNamespace // just to calm down some warnings
 
             return reader.HasSpan(4) ? Fast(ref reader) : Slow(ref reader);
         }
-        private static ulong ReadRawUInt64(ref this BufferReader reader)
+        private static ulong ReadRawUInt64(ref BufferReader reader)
         {
             ulong Fast(ref BufferReader buffer)
             {
@@ -193,9 +199,9 @@ namespace AggressiveNamespace // just to calm down some warnings
                 case WireType.Varint:
                     return (long)reader.ReadVarint();
                 case WireType.Fixed32:
-                    return BitConverter.Int32BitsToSingle((int)reader.ReadRawUInt32());
+                    return BitConverter.Int32BitsToSingle((int)ReadRawUInt32(ref reader));
                 case WireType.Fixed64:
-                    return BitConverter.Int64BitsToDouble((long)reader.ReadRawUInt64());
+                    return BitConverter.Int64BitsToDouble((long)ReadRawUInt64(ref reader));
                 default:
                     ThrowNotSupported(wireType);
                     return default;
@@ -279,7 +285,7 @@ namespace AggressiveNamespace // just to calm down some warnings
             var ctx = SimpleCache<DeserializationContext>.Get();
             var rootFrame = ctx.Resume(serializer, value, maxBytes);
 
-            long bytesNeeded = 0, position = 0;
+            long bytesNeeded = 0;
             while (true)
             {
                 var result = await reader.ReadAsync(cancellationToken);
@@ -295,7 +301,7 @@ namespace AggressiveNamespace // just to calm down some warnings
                     }
                     else
                     {
-                        bool madeProgress = !ctx.Execute(ref buffer, ref position, out long moreBytesNeeded);
+                        bool madeProgress = !ctx.Execute(ref buffer, out long moreBytesNeeded);
                         Verbose.WriteLine($"failed to make progress; needs {moreBytesNeeded} more bytes");
                         bytesNeeded = buffer.Length + moreBytesNeeded;
                     }
@@ -303,6 +309,7 @@ namespace AggressiveNamespace // just to calm down some warnings
                 finally
                 {
                     reader.Advance(buffer.Start, buffer.End); // need to ensure Advance is called even upon exception
+                    ctx.ClearPosition(); // our Position should now be treated as meaningless
                 }
 
                 if (result.IsCompleted && buffer.IsEmpty)
@@ -316,15 +323,19 @@ namespace AggressiveNamespace // just to calm down some warnings
         }
     }
     // no holds barred, aggressive, no tentative "can I do this" melarky: just do it or die trying
-    class AggressiveDeserializer : IResumableDeserializer<Order>, IResumableDeserializer<Customer>,
+    public sealed class AggressiveDeserializer : IResumableDeserializer<Order>, IResumableDeserializer<Customer>,
         IResumableDeserializer<ProtoBuf.CustomerMagicWrapper>
     {
         public static AggressiveDeserializer Instance { get; } = new AggressiveDeserializer();
         private AggressiveDeserializer() { }
 
 
-        void IResumableDeserializer<ProtoBuf.CustomerMagicWrapper>.Deserialize(ReadOnlyBuffer buffer, ref ProtoBuf.CustomerMagicWrapper value, DeserializationContext ctx)
+        void IResumableDeserializer<ProtoBuf.CustomerMagicWrapper>.Deserialize(in ReadOnlyBuffer buffer, ref ProtoBuf.CustomerMagicWrapper value, DeserializationContext ctx)
         {
+            Verbose.WriteLine($"[{ctx.Position(0)}] reading CustomerMagicWrapper, [{ctx.Position(0)}]-[{ctx.Position(buffer.Length)}]");
+            Debug.Assert(ctx.PositionSlow(buffer.Start) == ctx.Position(0));
+            Debug.Assert(ctx.PositionSlow(buffer.End) == ctx.Position(buffer.Length));
+
             // no inheritence or factory - simple init
             if (value == null) value = new ProtoBuf.CustomerMagicWrapper();
 
@@ -332,6 +343,8 @@ namespace AggressiveNamespace // just to calm down some warnings
             while (true)
             {
                 (var fieldNumber, var wireType) = ctx.ReadNextField(ref reader);
+                Verbose.WriteLine($"[{ctx.Position(reader.ConsumedBytes)}] reading CustomerMagicWrapper field {fieldNumber} ({wireType}), {GetLength(reader)} remaining...");
+
                 HaveField:
                 switch (fieldNumber)
                 {
@@ -355,8 +368,12 @@ namespace AggressiveNamespace // just to calm down some warnings
 
         }
 
-        void IResumableDeserializer<Customer>.Deserialize(ReadOnlyBuffer buffer, ref Customer value, DeserializationContext ctx)
+        void IResumableDeserializer<Customer>.Deserialize(in ReadOnlyBuffer buffer, ref Customer value, DeserializationContext ctx)
         {
+            Verbose.WriteLine($"[{ctx.Position(0)}] reading Customer, [{ctx.Position(0)}]-[{ctx.Position(buffer.Length)}]");
+            Debug.Assert(ctx.PositionSlow(buffer.Start) == ctx.Position(0));
+            Debug.Assert(ctx.PositionSlow(buffer.End) == ctx.Position(buffer.Length));
+
             // no inheritance or factory, so can do simple creation
             if (value == null) value = new Customer();
 
@@ -364,6 +381,8 @@ namespace AggressiveNamespace // just to calm down some warnings
             while (true)
             {
                 (var fieldNumber, var wireType) = ctx.ReadNextField(ref reader);
+                Verbose.WriteLine($"[{ctx.Position(reader.ConsumedBytes)}] reading Customer field {fieldNumber} ({wireType}), {GetLength(reader)} remaining...");
+
                 HaveField:
                 switch (fieldNumber)
                 {
@@ -397,7 +416,7 @@ namespace AggressiveNamespace // just to calm down some warnings
             }
         }
 
-        static long GetLength(BufferReader reader)
+        static long GetLength(BufferReader reader) // not in/ref - we're going to corrupt it
         {
             long len = 0;
             while (!reader.End)
@@ -408,8 +427,12 @@ namespace AggressiveNamespace // just to calm down some warnings
             }
             return len;
         }
-        void IResumableDeserializer<Order>.Deserialize(ReadOnlyBuffer buffer, ref Order value, DeserializationContext ctx)
+        void IResumableDeserializer<Order>.Deserialize(in ReadOnlyBuffer buffer, ref Order value, DeserializationContext ctx)
         {
+            Verbose.WriteLine($"[{ctx.Position(0)}] reading Order, [{ctx.Position(0)}]-[{ctx.Position(buffer.Length)}]");
+            Debug.Assert(ctx.PositionSlow(buffer.Start) == ctx.Position(0));
+            Debug.Assert(ctx.PositionSlow(buffer.End) == ctx.Position(buffer.Length));
+
             // no inheritance or factory, so can do simple creation
             if (value == null) value = new Order();
 
@@ -417,7 +440,7 @@ namespace AggressiveNamespace // just to calm down some warnings
             while (true)
             {
                 (var fieldNumber, var wireType) = ctx.ReadNextField(ref reader);
-                Verbose.WriteLine($"[{ctx.Position(reader.Cursor)}] reading field {fieldNumber} ({wireType}), {GetLength(reader)} remaining...");
+                Verbose.WriteLine($"[{ctx.Position(reader.ConsumedBytes)}] reading Order field {fieldNumber} ({wireType}), {GetLength(reader)} remaining...");
 
                 switch (fieldNumber)
                 {
