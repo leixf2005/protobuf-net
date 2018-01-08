@@ -5,10 +5,10 @@ namespace System.IO.Pipelines
 {
     public class StreamPipeConnection : IPipeConnection
     {
-        public StreamPipeConnection(PipeOptions options, Stream stream)
+        public StreamPipeConnection(PipeFactory factory, Stream stream)
         {
-            Input = CreateReader(options, stream);
-            Output = CreateWriter(options, stream);
+            Input = CreateReader(factory, stream);
+            Output = CreateWriter(factory, stream);
         }
 
         public IPipeReader Input { get; }
@@ -21,22 +21,22 @@ namespace System.IO.Pipelines
             Output.Complete();
         }
 
-        public static IPipeReader CreateReader(PipeOptions options, Stream stream)
+        public static IPipeReader CreateReader(PipeFactory factory, Stream stream)
         {
             if (!stream.CanRead)
             {
                 throw new NotSupportedException();
             }
 
-            var pipe = new Pipe(options);
+            var pipe = factory.Create();
             var ignore = stream.CopyToEndAsync(pipe.Writer);
 
             return pipe.Reader;
         }
 
-        public static IPipeWriter CreateWriter(PipeOptions options, Stream stream)
+        public static IPipeWriter CreateWriter(PipeFactory factory, Stream stream)
         {
-            var pipe = new Pipe(options);
+            var pipe = factory.Create();
             if (stream.CanWrite)
             {
                 var _ = pipe.Reader.CopyToEndAsync(stream);

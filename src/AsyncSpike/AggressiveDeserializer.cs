@@ -1,11 +1,5 @@
-﻿#if DEBUG
-// #define VERBOSE
-#endif
-
-using System;
-using System.Buffers;
+﻿using System;
 using System.Diagnostics;
-using System.IO;
 using System.IO.Pipelines;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -27,10 +21,10 @@ namespace AggressiveNamespace // just to calm down some warnings
     }
     public static class AggressiveDeserializerExtensions
     {
-        public static T Deserialize<T>(this IResumableDeserializer<T> serializer, ReadOnlyBuffer buffer, T value = default)
+        public static T Deserialize<T>(this IResumableDeserializer<T> serializer, ReadableBuffer buffer, T value = default)
         {
             var ctx = SimpleCache<DeserializationContext>.Get();
-            ctx.SetOrigin(buffer);
+            ctx.SetOrigin(0, buffer);
             serializer.Deserialize(buffer, ref value, ctx);
             SimpleCache<DeserializationContext>.Recycle(ctx);
             return value;
@@ -43,12 +37,12 @@ namespace AggressiveNamespace // just to calm down some warnings
         static bool ThrowNotSupported(WireType wireType) => throw new NotSupportedException(wireType.ToString());
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static bool HasSpan(ref this BufferReader reader, int bytes)
+        private static bool HasSpan(ref this ReadableBufferReader reader, int bytes)
                 => reader.Span.Length >= reader.Index + bytes;
 
-        public static ulong ReadVarint(ref this BufferReader reader)
+        public static ulong ReadVarint(ref this ReadableBufferReader reader)
         {
-            ulong Fast(ref BufferReader buffer)
+            ulong Fast(ref ReadableBufferReader buffer)
             {
                 var span = buffer.Span;
                 ulong val = 0;
@@ -76,7 +70,7 @@ namespace AggressiveNamespace // just to calm down some warnings
                 }
                 return ThrowOverflow();
             }
-            ulong Slow(ref BufferReader buffer)
+            ulong Slow(ref ReadableBufferReader buffer)
             {
                 var x = buffer.Take();
                 if (x < 0) return ThrowEOF(1, nameof(ReadVarint));
@@ -110,7 +104,7 @@ namespace AggressiveNamespace // just to calm down some warnings
             return reader.HasSpan(10) ? Fast(ref reader) : Slow(ref reader);
         }
 
-        internal static void SkipField(ref this BufferReader reader, WireType wireType)
+        internal static void SkipField(ref this ReadableBufferReader reader, WireType wireType)
         {
             switch (wireType)
             {
@@ -132,7 +126,7 @@ namespace AggressiveNamespace // just to calm down some warnings
                     break;
             }
         }
-        public static int ReadInt32(ref this BufferReader reader, WireType wireType)
+        public static int ReadInt32(ref this ReadableBufferReader reader, WireType wireType)
         {
             switch (wireType)
             {
@@ -147,9 +141,9 @@ namespace AggressiveNamespace // just to calm down some warnings
                     return default;
             }
         }
-        private static uint ReadRawUInt32(ref BufferReader reader)
+        private static uint ReadRawUInt32(ref ReadableBufferReader reader)
         {
-            uint Fast(ref BufferReader buffer)
+            uint Fast(ref ReadableBufferReader buffer)
             {
                 int index = buffer.Index;
                 var span = buffer.Span;
@@ -158,7 +152,7 @@ namespace AggressiveNamespace // just to calm down some warnings
                 return val;
             }
 
-            uint Slow(ref BufferReader buffer)
+            uint Slow(ref ReadableBufferReader buffer)
             {
                 int a = buffer.Take(), b = buffer.Take(), c = buffer.Take(), d = buffer.Take();
                 if ((a | b | c | d) < 0) return ThrowEOF(a < 0 ? 4 : b < 0 ? 3 : c < 0 ? 2 : 1, nameof(ReadRawUInt64));
@@ -167,9 +161,9 @@ namespace AggressiveNamespace // just to calm down some warnings
 
             return reader.HasSpan(4) ? Fast(ref reader) : Slow(ref reader);
         }
-        private static ulong ReadRawUInt64(ref BufferReader reader)
+        private static ulong ReadRawUInt64(ref ReadableBufferReader reader)
         {
-            ulong Fast(ref BufferReader buffer)
+            ulong Fast(ref ReadableBufferReader buffer)
             {
                 int index = buffer.Index;
                 var span = buffer.Span;
@@ -180,7 +174,7 @@ namespace AggressiveNamespace // just to calm down some warnings
                 return (ulong)lo | ((ulong)hi) << 32;
             }
 
-            ulong Slow(ref BufferReader buffer)
+            ulong Slow(ref ReadableBufferReader buffer)
             {
                 int a = buffer.Take(), b = buffer.Take(), c = buffer.Take(), d = buffer.Take(),
                     e = buffer.Take(), f = buffer.Take(), g = buffer.Take(), h = buffer.Take();
@@ -192,7 +186,7 @@ namespace AggressiveNamespace // just to calm down some warnings
 
             return reader.HasSpan(8) ? Fast(ref reader) : Slow(ref reader);
         }
-        public static double ReadDouble(ref this BufferReader reader, WireType wireType)
+        public static double ReadDouble(ref this ReadableBufferReader reader, WireType wireType)
         {
             switch (wireType)
             {
@@ -212,9 +206,9 @@ namespace AggressiveNamespace // just to calm down some warnings
         [ThreadStatic]
         static Decoder _decoder;
         static Decoder Decoder => _decoder ?? (_decoder = Encoding.GetDecoder());
-        public static string ReadString(ref this BufferReader reader, WireType wireType)
+        public static string ReadString(ref this ReadableBufferReader reader, WireType wireType)
         {
-            unsafe string Fast(ref BufferReader buffer, int bytes)
+            unsafe string Fast(ref ReadableBufferReader buffer, int bytes)
             {
                 string s;
                 fixed (byte* ptr = &MemoryMarshal.GetReference(buffer.Span))
@@ -225,10 +219,10 @@ namespace AggressiveNamespace // just to calm down some warnings
                 return s;
             }
             const int MaxStackAllocSize = 8096; // no special reason, but limit needs to be somewhere
-            unsafe string Slow(ref BufferReader buffer, int bytes)
+            unsafe string Slow(ref ReadableBufferReader buffer, int bytes)
                 => bytes <= MaxStackAllocSize ? SlowStackAlloc(ref buffer, bytes) : SlowDoubleReadPreallocString(ref buffer, bytes);
 
-            unsafe string SlowStackAlloc(ref BufferReader buffer, int bytes)
+            unsafe string SlowStackAlloc(ref ReadableBufferReader buffer, int bytes)
             {
                 var decoder = Decoder;
                 decoder.Reset();
@@ -263,7 +257,7 @@ namespace AggressiveNamespace // just to calm down some warnings
 
                 return new string(c, 0, charCount);
             }
-            unsafe string SlowDoubleReadPreallocString(ref BufferReader buffer, int bytes)
+            unsafe string SlowDoubleReadPreallocString(ref ReadableBufferReader buffer, int bytes)
             {
                 throw new NotImplementedException("huge string support");
                 // what this needs to do is: try to read the buffer once to compute the string length (decoder.GetCharCount),
@@ -329,8 +323,19 @@ namespace AggressiveNamespace // just to calm down some warnings
         public static AggressiveDeserializer Instance { get; } = new AggressiveDeserializer();
         private AggressiveDeserializer() { }
 
-
-        void IResumableDeserializer<ProtoBuf.CustomerMagicWrapper>.Deserialize(in ReadOnlyBuffer buffer, ref ProtoBuf.CustomerMagicWrapper value, DeserializationContext ctx)
+        long IResumableDeserializer<ProtoBuf.Order>.Serialize(in WritableBuffer buffer, ref ProtoBuf.Order value, DeserializationContext ctx)
+        {
+            throw new NotImplementedException();
+        }
+        long IResumableDeserializer<ProtoBuf.Customer>.Serialize(in WritableBuffer buffer, ref ProtoBuf.Customer customer, DeserializationContext ctx)
+        {
+            throw new NotImplementedException();
+        }
+        long IResumableDeserializer<ProtoBuf.CustomerMagicWrapper>.Serialize(in WritableBuffer buffer, ref ProtoBuf.CustomerMagicWrapper value, DeserializationContext ctx)
+        {
+            throw new NotImplementedException();
+        }
+        void IResumableDeserializer<ProtoBuf.CustomerMagicWrapper>.Deserialize(in ReadableBuffer buffer, ref ProtoBuf.CustomerMagicWrapper value, DeserializationContext ctx)
         {
             Verbose.WriteLine($"[{ctx.Position(0)}] reading CustomerMagicWrapper, [{ctx.Position(0)}]-[{ctx.Position(buffer.Length)}]");
             Debug.Assert(ctx.PositionSlow(buffer.Start) == ctx.Position(0));
@@ -339,7 +344,7 @@ namespace AggressiveNamespace // just to calm down some warnings
             // no inheritence or factory - simple init
             if (value == null) value = new ProtoBuf.CustomerMagicWrapper();
 
-            var reader = new BufferReader(buffer);
+            var reader = new ReadableBufferReader(buffer);
             while (true)
             {
                 (var fieldNumber, var wireType) = ctx.ReadNextField(ref reader);
@@ -368,7 +373,7 @@ namespace AggressiveNamespace // just to calm down some warnings
 
         }
 
-        void IResumableDeserializer<Customer>.Deserialize(in ReadOnlyBuffer buffer, ref Customer value, DeserializationContext ctx)
+        void IResumableDeserializer<Customer>.Deserialize(in ReadableBuffer buffer, ref Customer value, DeserializationContext ctx)
         {
             Verbose.WriteLine($"[{ctx.Position(0)}] reading Customer, [{ctx.Position(0)}]-[{ctx.Position(buffer.Length)}]");
             Debug.Assert(ctx.PositionSlow(buffer.Start) == ctx.Position(0));
@@ -377,7 +382,7 @@ namespace AggressiveNamespace // just to calm down some warnings
             // no inheritance or factory, so can do simple creation
             if (value == null) value = new Customer();
 
-            var reader = new BufferReader(buffer);
+            var reader = new ReadableBufferReader(buffer);
             while (true)
             {
                 (var fieldNumber, var wireType) = ctx.ReadNextField(ref reader);
@@ -416,7 +421,7 @@ namespace AggressiveNamespace // just to calm down some warnings
             }
         }
 
-        static long GetLength(BufferReader reader) // not in/ref - we're going to corrupt it
+        static long GetLength(ReadableBufferReader reader) // not in/ref - we're going to corrupt it
         {
             long len = 0;
             while (!reader.End)
@@ -427,7 +432,7 @@ namespace AggressiveNamespace // just to calm down some warnings
             }
             return len;
         }
-        void IResumableDeserializer<Order>.Deserialize(in ReadOnlyBuffer buffer, ref Order value, DeserializationContext ctx)
+        void IResumableDeserializer<Order>.Deserialize(in ReadableBuffer buffer, ref Order value, DeserializationContext ctx)
         {
             Verbose.WriteLine($"[{ctx.Position(0)}] reading Order, [{ctx.Position(0)}]-[{ctx.Position(buffer.Length)}]");
             Debug.Assert(ctx.PositionSlow(buffer.Start) == ctx.Position(0));
@@ -436,7 +441,7 @@ namespace AggressiveNamespace // just to calm down some warnings
             // no inheritance or factory, so can do simple creation
             if (value == null) value = new Order();
 
-            var reader = new BufferReader(buffer);
+            var reader = new ReadableBufferReader(buffer);
             while (true)
             {
                 (var fieldNumber, var wireType) = ctx.ReadNextField(ref reader);

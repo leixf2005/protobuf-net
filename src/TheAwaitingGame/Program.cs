@@ -12,6 +12,7 @@ using BenchmarkDotNet.Columns;
 using System.IO;
 using System.Buffers;
 using AggressiveNamespace;
+using System.IO.Pipelines;
 
 namespace TheAwaitingGame
 {
@@ -125,7 +126,7 @@ namespace TheAwaitingGame
         [Benchmark(OperationsPerInvoke = REPEATS_PER_CUSTOMER, Description = "single, ReadOnlyBuffer")]
         public void DeserializeSingleWithBuffer()
         {
-            var buffer = new ReadOnlyBuffer(_customerBlob);
+            var buffer = ReadableBuffer.Create(_customerBlob);
             for (int i = 0; i < REPEATS_PER_CUSTOMER; i++)
             {
                 GC.KeepAlive(AggressiveDeserializer.Instance.Deserialize<ProtoBuf.Customer>(buffer));
@@ -149,7 +150,7 @@ namespace TheAwaitingGame
         [Benchmark(OperationsPerInvoke = REPEATS_PER_MAGIC_WRAPPER, Description = "multi, ReadOnlyBuffer")]
         public void DeserializeMultiWithBuffer()
         {
-            var buffer = new ReadOnlyBuffer(_magicWrapperBlob);
+            var buffer = ReadableBuffer.Create(_magicWrapperBlob);
             for (int i = 0; i < REPEATS_PER_MAGIC_WRAPPER; i++)
             {
                 GC.KeepAlive(AggressiveDeserializer.Instance.Deserialize<ProtoBuf.CustomerMagicWrapper>(buffer));

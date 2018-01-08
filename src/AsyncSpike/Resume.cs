@@ -1,13 +1,9 @@
-﻿#if DEBUG
-// #define VERBOSE
-#endif
-
-using ProtoBuf;
+﻿using ProtoBuf;
 using System;
-using System.Buffers;
 using System.Collections.Generic;
-using System.Collections.Sequences;
+using System.Diagnostics;
 using System.IO;
+using System.IO.Pipelines;
 using System.Runtime.CompilerServices;
 using System.Threading;
 
@@ -45,7 +41,7 @@ namespace AggressiveNamespace
         }
         ResumeFrame _previous;
         public long ContinueFrom { get; private set; }
-        public (int FieldNumber, WireType WireType) ReadNextField(ref BufferReader reader)
+        public (int FieldNumber, WireType WireType) ReadNextField(ref ReadableBufferReader reader)
         {
             // do we have a value to pop?
             var frame = _previous;
@@ -53,8 +49,13 @@ namespace AggressiveNamespace
             {
                 return frame.FieldHeader();
             }
+            
+            // store our known-safe recovery position
+            long newPos = Position(reader.ConsumedBytes);
+            Debug.Assert(newPos >= ContinueFrom); // we should never move backwards
+            Verbose.WriteLine($"Setting continue-from to [{newPos}]");
+            ContinueFrom = newPos;
 
-            ContinueFrom = Position(reader.ConsumedBytes); // store our known-safe recovery position
             if (reader.End) return (0, default);
             var fieldHeader = reader.ReadVarint();
 
@@ -66,15 +67,15 @@ namespace AggressiveNamespace
 
         readonly Stack<ResumeFrame> _resume = new Stack<ResumeFrame>();
 
-        internal bool Execute(ref ReadOnlyBuffer buffer, out long moreBytesNeeded)
+        internal bool Execute(ref ReadableBuffer buffer, out long moreBytesNeeded)
         {
             moreBytesNeeded = 0;
-            SetOrigin(buffer);
+            _basePosition.Buffer = buffer;
             while (!buffer.IsEmpty && _resume.TryPeek(out var frame))
             {
-                long available = buffer.Length;
+                long available = buffer.Length, oldOrigin = _basePosition.Absolute;
                 
-                ReadOnlyBuffer slice;
+                ReadableBuffer slice;
                 bool frameIsComplete = false;
 
                 long needed;
@@ -107,15 +108,20 @@ namespace AggressiveNamespace
                 {
                     throw new InvalidOperationException("We should have had a complete frame, but someone is requesting more data");
                 }
-                if (consumedBytes == 0) return false;
+                
                 buffer = buffer.Slice(consumedBytes);
-                SetOrigin(buffer);
+                SetOrigin(oldOrigin + consumedBytes, buffer);
+
+                if (consumedBytes == 0) return false;
+
                 Verbose.WriteLine($"consumed {consumedBytes} bytes; position now {Position(0)}");
             }
             return true;
         }
+        [Conditional("VERBOSE")]
         void ShowFrames(string state)
         {
+#if VERBOSE
             if (_resume.Count != 0)
             {
                 Verbose.WriteLine($"Incomplete frames: {state}");
@@ -124,6 +130,7 @@ namespace AggressiveNamespace
                     Verbose.WriteLine($"\t{x}; expected end: {(x.End == long.MaxValue ? -1 : x.End)}...");
                 }
             }
+#endif
         }
         internal ResumeFrame Resume<T>(IResumableDeserializer<T> serializer, T value, long end)
         {
@@ -136,34 +143,44 @@ namespace AggressiveNamespace
         internal long Position(long offset) => _basePosition.Absolute + offset;
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal long Position(int offset) => _basePosition.Absolute + offset;
-        internal long PositionSlow(in Position position) => _basePosition.Absolute + new ReadOnlyBuffer(_basePosition.LastPosition, position).Length;
+        internal long PositionSlow(in ReadCursor position) => _basePosition.Absolute +
+            _basePosition.Buffer.Slice(0, position).Length;
+
+        internal ReadableBuffer Slice(long offet, long length)
+            => _basePosition.Buffer.Slice(0, length);
+        internal ReadableBuffer Slice(ReadCursor from, ReadCursor to)
+        {
+            try
+            {
+                return _basePosition.Buffer.Slice(from, to);
+            }
+            catch(InvalidOperationException)
+            {
+                // slice harder
+                return _basePosition.Buffer.Slice(from).Slice(0, to);
+            }
+        }   
 
         internal void ClearPosition()
         {
-            _basePosition.LastPosition = default;
+            _basePosition.Buffer = default;
         }
-        internal void SetOrigin(in ReadOnlyBuffer buffer)
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal void SetOrigin(long absolute, in ReadableBuffer relative)
         {
-            if (_basePosition.LastPosition == buffer.Start) return; // nothing to do
-
-            long absolute = _basePosition.Absolute;
-            if (_basePosition.LastPosition != default)
-            {
-                absolute += new ReadOnlyBuffer(_basePosition.LastPosition, buffer.Start).Length;
-            }
-
-            _basePosition = (absolute, buffer.Start);
+            Verbose.WriteLine($"Setting origin to [{absolute}-{(absolute + relative.Length)}] ({relative.Length})");
+            _basePosition = (absolute, relative);
         }
-        (long Absolute, Position LastPosition) _basePosition;
+        (long Absolute, ReadableBuffer Buffer) _basePosition;
 
-        internal T DeserializeSubItem<T>(ref BufferReader reader,
+        internal T DeserializeSubItem<T>(ref ReadableBufferReader reader,
             IResumableDeserializer<T> serializer,
             int fieldNumber, WireType wireType, T value = default)
         {
             DeserializeSubItem(ref reader, serializer, fieldNumber, wireType, ref value);
             return value;
         }
-        internal void DeserializeSubItem<T>(ref BufferReader reader,
+        internal void DeserializeSubItem<T>(ref ReadableBufferReader reader,
             IResumableDeserializer<T> serializer,
             int fieldNumber, WireType wireType, ref T value)
         {
@@ -196,17 +213,16 @@ namespace AggressiveNamespace
             
             if(itFits)
             {
-                var slice = new ReadOnlyBuffer(from, reader.Cursor);
+                var slice = Slice(from, reader.Cursor);
                 Verbose.WriteLine($"Reading '{typeof(T).Name}' without using the context stack; {len} bytes needed, {slice.Length} available; {startAbsolute} to {Position(reader.ConsumedBytes)}");
 
                 try
                 {
                     _pushLock++;
                     var oldOrigin = _basePosition; // snapshot the old origin
-                    _basePosition = (startAbsolute, slice.Start);
-                    SetOrigin(slice);
+                    SetOrigin(startAbsolute, slice);
                     serializer.Deserialize(slice, ref value, this);
-                    _basePosition = oldOrigin; // because after this, the running method is going to keep using Position(reader.ConsumedBytes), which is an *earlier* point
+                    SetOrigin(oldOrigin.Absolute, oldOrigin.Buffer); // because after this, the running method is going to keep using Position(reader.ConsumedBytes), which is an *earlier* point
                     _pushLock--;
                 }
                 catch (MoreDataNeededException ex)
@@ -218,7 +234,7 @@ namespace AggressiveNamespace
             {
                 // incomplete object; do what we can
                 frame = ResumeFrame.Create<T>(serializer, value, fieldNumber, wireType, startAbsolute + len);
-                var slice = new ReadOnlyBuffer(from, reader.Cursor);
+                var slice = Slice(from, reader.Cursor);
 
                 
                 Verbose.WriteLine($"Reading '{typeof(T).Name}' using the context stack (incomplete data); {len} bytes needed, {slice.Length} available; {startAbsolute} to {frame.End}");
@@ -229,6 +245,7 @@ namespace AggressiveNamespace
                 }
                 _resume.Push(frame);
                 ShowFrames("in DeserializeSubItem");
+                SetOrigin(startAbsolute, slice);
                 frame.Execute(slice, this);
 
                 throw new InvalidOperationException("I unexpectedly succeeded; this is embarrassing");
@@ -240,9 +257,15 @@ namespace AggressiveNamespace
 
         
     }
+    public interface IProtoSerializer<T>
+        : IResumableDeserializer<T>
+    {
+        long CalculateLength(ref T value, DeserializationContext ctx);
+    }
     public interface IResumableDeserializer<T>
     {
-        void Deserialize(in ReadOnlyBuffer buffer, ref T value, DeserializationContext ctx);
+        void Deserialize(in ReadableBuffer buffer, ref T value, DeserializationContext ctx);
+        long Serialize(in WritableBuffer buffer, ref T value, DeserializationContext ctx);
     }
     abstract class ResumeFrame
     {
@@ -263,8 +286,8 @@ namespace AggressiveNamespace
         }
         internal T Get<T>() => ((TypedResumeFrame<T>)this).Value;
 
-        internal abstract void Execute(in ReadOnlyBuffer slice, DeserializationContext ctx);
-        internal abstract bool TryExecute(in ReadOnlyBuffer slice, DeserializationContext ctx, out long consumedBytes, out long moreBytesNeeded);
+        internal abstract void Execute(in ReadableBuffer slice, DeserializationContext ctx);
+        internal abstract bool TryExecute(in ReadableBuffer slice, DeserializationContext ctx, out long consumedBytes, out long moreBytesNeeded);
 
         private int _fieldNumber;
         private WireType _wireType;
@@ -305,10 +328,9 @@ namespace AggressiveNamespace
                 return this;
             }
 
-            internal override void Execute(in ReadOnlyBuffer slice, DeserializationContext ctx)
+            internal override void Execute(in ReadableBuffer slice, DeserializationContext ctx)
             {
                 Verbose.WriteLine($"Executing frame for {typeof(T).Name}... [{ctx.PositionSlow(slice.Start)}-{ctx.PositionSlow(slice.End)}]");
-                ctx.SetOrigin(slice);
                 try
                 {
                     _serializer.Deserialize(slice, ref _value, ctx);
@@ -318,13 +340,12 @@ namespace AggressiveNamespace
                     Verbose.WriteLine($"{typeof(T).Name} after execute: {_value}");
                 }
             }
-            internal override bool TryExecute(in ReadOnlyBuffer slice, DeserializationContext ctx, out long consumedBytes, out long moreBytesNeeded)
+            internal override bool TryExecute(in ReadableBuffer slice, DeserializationContext ctx, out long consumedBytes, out long moreBytesNeeded)
             {
                 Verbose.WriteLine($"Executing frame for {typeof(T).Name}... [{ctx.PositionSlow(slice.Start)}-{ctx.PositionSlow(slice.End)}]");
                 
                 bool result;
                 moreBytesNeeded = 0;
-                ctx.SetOrigin(slice);
                 long started = ctx.Position(0);
                 try
                 {

@@ -1,9 +1,5 @@
 ﻿#define RUNACC
 
-#if DEBUG
-// #define VERBOSE
-#endif
-
 using AggressiveNamespace;
 using ProtoBuf;
 using System;
@@ -20,176 +16,179 @@ using Xunit;
 
 public class SimpleUsage : IDisposable
 {
-    private PipeOptions _options = new PipeOptions(new MemoryPool());
-    void IDisposable.Dispose() => _options?.Pool?.Dispose();
-
-    static void SlicePerf(int LOOP, TextWriter log)
+    // private PipeOptions _options = new PipeOptions(new MemoryPool());
+    void IDisposable.Dispose()
     {
-        int Acc(ReadOnlySpan<byte> a) => a[0] ^ a[1]; // just something arbitrary
-
-        byte[] data = new byte[64 * 1024];
-        new Random(123).NextBytes(data);
-
-        log?.WriteLine($"Comparing slice performance slicing {data.Length} bytes into {data.Length / 2} slices, {LOOP} times");
-
-#if !RUNACC
-        log?.WriteLine("The individual variant results only make sense if RUNACC is defined, which: is isn't -");
-        log?.WriteLine("the interior code *didn't run at all*, so: just look at the overall timings in the categories");
-#endif
-
-
-
-
-        ReadOnlyMemory<byte> memory;
-        ReadOnlySpan<byte> span;
-        ReadOnlyBuffer rob;
-        Stopwatch watch;
-        int acc = 0;
-
-        log?.WriteLine("");
-        log?.WriteLine("Span<byte>");
-        watch = Stopwatch.StartNew();
-        for (int i = 0; i < LOOP; i++)
-        {
-            acc = 0;
-            span = data;
-            while (!span.IsEmpty)
-            {
-#if RUNACC
-                acc ^= Acc(span.Slice(0, 2));
-#endif
-                span = span.Slice(2);
-            }
-        }
-        watch.Stop();
-        log?.WriteLine($"\t=>Slice: acc={acc}, {watch.ElapsedMilliseconds}ms");
-
-        log?.WriteLine("");
-        log?.WriteLine("Memory<byte>");
-        watch = Stopwatch.StartNew();
-        for (int i = 0; i < LOOP; i++)
-        {
-            acc = 0;
-            memory = data;
-            while (!memory.IsEmpty)
-            {
-#if RUNACC
-                acc ^= Acc(memory.Span.Slice(0, 2));
-#endif
-                memory = memory.Slice(2);
-            }
-        }
-        watch.Stop();
-        log?.WriteLine($"\t=>Span=>Slice: acc={acc}, {watch.ElapsedMilliseconds}ms");
-
-        watch = Stopwatch.StartNew();
-        for (int i = 0; i < LOOP; i++)
-        {
-            acc = 0;
-            memory = data;
-            while (!memory.IsEmpty)
-            {
-#if RUNACC
-                acc ^= Acc(memory.Slice(0, 2).Span);
-#endif
-                memory = memory.Slice(2);
-            }
-        }
-        watch.Stop();
-        log?.WriteLine($"\t=>Slice=>Span: acc={acc}, {watch.ElapsedMilliseconds}ms");
-
-        rob = new ReadOnlyBuffer(data);
-        log?.WriteLine("");
-        log?.WriteLine($"ReadOnlyBuffer, {nameof(rob.IsSingleSpan)}={rob.IsSingleSpan}");
-
-        watch = Stopwatch.StartNew();
-        for (int i = 0; i < LOOP; i++)
-        {
-            acc = 0;
-            rob = new ReadOnlyBuffer(data);
-            while (!rob.IsEmpty)
-            {
-#if RUNACC
-                acc ^= Acc(rob.Slice(0, 2).First.Span);
-#endif
-                rob = rob.Slice(2);
-            }
-        }
-        watch.Stop();
-        log?.WriteLine($"\t=>Slice=>First=>Span: acc={acc}, {watch.ElapsedMilliseconds}ms");
-
-        watch = Stopwatch.StartNew();
-        for (int i = 0; i < LOOP; i++)
-        {
-            acc = 0;
-            rob = new ReadOnlyBuffer(data);
-            while (!rob.IsEmpty)
-            {
-#if RUNACC
-                acc ^= Acc(rob.First.Slice(0, 2).Span);
-#endif
-                rob = rob.Slice(2);
-            }
-        }
-        watch.Stop();
-        log?.WriteLine($"\t=>First=>Slice=>Span: acc={acc}, {watch.ElapsedMilliseconds}ms");
-
-        watch = Stopwatch.StartNew();
-        for (int i = 0; i < LOOP; i++)
-        {
-            acc = 0;
-            rob = new ReadOnlyBuffer(data);
-            while (!rob.IsEmpty)
-            {
-#if RUNACC
-                acc ^= Acc(rob.First.Span.Slice(0, 2));
-#endif
-                rob = rob.Slice(2);
-            }
-        }
-        watch.Stop();
-        log?.WriteLine($"\t=>First=>Span=>Slice: acc={acc}, {watch.ElapsedMilliseconds}ms");
-
-
-        rob = new ReadOnlyBuffer(data);
-        var drob = new DoubleBufferedReadOnlyBuffer(rob);
-        log?.WriteLine("");
-        log?.WriteLine($"DoubleBufferedReadOnlyBuffer, {nameof(drob.IsSingleSpan)}={drob.IsSingleSpan}");
-
-        watch = Stopwatch.StartNew();
-        for (int i = 0; i < LOOP; i++)
-        {
-            acc = 0;
-            drob = new DoubleBufferedReadOnlyBuffer(rob);
-            while (!drob.IsEmpty)
-            {
-#if RUNACC
-                acc ^= Acc(drob.First.Slice(0, 2).Span);
-#endif
-                drob = drob.Slice(2);
-            }
-        }
-        watch.Stop();
-        log?.WriteLine($"\t=>First=>Slice=>Span: acc={acc}, {watch.ElapsedMilliseconds}ms");
-
-        watch = Stopwatch.StartNew();
-        for (int i = 0; i < LOOP; i++)
-        {
-            acc = 0;
-            drob = new DoubleBufferedReadOnlyBuffer(rob);
-            while (!drob.IsEmpty)
-            {
-#if RUNACC
-                acc ^= Acc(drob.First.Span.Slice(0, 2));
-#endif
-                drob = drob.Slice(2);
-            }
-        }
-        watch.Stop();
-        log?.WriteLine($"\t=>First=>Span=>Slice: acc={acc}, {watch.ElapsedMilliseconds}ms");
-
-
+    //    _options?.Pool?.Dispose();
     }
+
+//    static void SlicePerf(int LOOP, TextWriter log)
+//    {
+//        int Acc(ReadOnlySpan<byte> a) => a[0] ^ a[1]; // just something arbitrary
+
+//        byte[] data = new byte[64 * 1024];
+//        new Random(123).NextBytes(data);
+
+//        log?.WriteLine($"Comparing slice performance slicing {data.Length} bytes into {data.Length / 2} slices, {LOOP} times");
+
+//#if !RUNACC
+//        log?.WriteLine("The individual variant results only make sense if RUNACC is defined, which: is isn't -");
+//        log?.WriteLine("the interior code *didn't run at all*, so: just look at the overall timings in the categories");
+//#endif
+
+
+
+
+//        ReadOnlyMemory<byte> memory;
+//        ReadOnlySpan<byte> span;
+//        ReadableBuffer rob;
+//        Stopwatch watch;
+//        int acc = 0;
+
+//        log?.WriteLine("");
+//        log?.WriteLine("Span<byte>");
+//        watch = Stopwatch.StartNew();
+//        for (int i = 0; i < LOOP; i++)
+//        {
+//            acc = 0;
+//            span = data;
+//            while (!span.IsEmpty)
+//            {
+//#if RUNACC
+//                acc ^= Acc(span.Slice(0, 2));
+//#endif
+//                span = span.Slice(2);
+//            }
+//        }
+//        watch.Stop();
+//        log?.WriteLine($"\t=>Slice: acc={acc}, {watch.ElapsedMilliseconds}ms");
+
+//        log?.WriteLine("");
+//        log?.WriteLine("Memory<byte>");
+//        watch = Stopwatch.StartNew();
+//        for (int i = 0; i < LOOP; i++)
+//        {
+//            acc = 0;
+//            memory = data;
+//            while (!memory.IsEmpty)
+//            {
+//#if RUNACC
+//                acc ^= Acc(memory.Span.Slice(0, 2));
+//#endif
+//                memory = memory.Slice(2);
+//            }
+//        }
+//        watch.Stop();
+//        log?.WriteLine($"\t=>Span=>Slice: acc={acc}, {watch.ElapsedMilliseconds}ms");
+
+//        watch = Stopwatch.StartNew();
+//        for (int i = 0; i < LOOP; i++)
+//        {
+//            acc = 0;
+//            memory = data;
+//            while (!memory.IsEmpty)
+//            {
+//#if RUNACC
+//                acc ^= Acc(memory.Slice(0, 2).Span);
+//#endif
+//                memory = memory.Slice(2);
+//            }
+//        }
+//        watch.Stop();
+//        log?.WriteLine($"\t=>Slice=>Span: acc={acc}, {watch.ElapsedMilliseconds}ms");
+
+//        rob = new ReadableBuffer(data);
+//        log?.WriteLine("");
+//        log?.WriteLine($"ReadableBuffer, {nameof(rob.IsSingleSpan)}={rob.IsSingleSpan}");
+
+//        watch = Stopwatch.StartNew();
+//        for (int i = 0; i < LOOP; i++)
+//        {
+//            acc = 0;
+//            rob = new ReadableBuffer(data);
+//            while (!rob.IsEmpty)
+//            {
+//#if RUNACC
+//                acc ^= Acc(rob.Slice(0, 2).First.Span);
+//#endif
+//                rob = rob.Slice(2);
+//            }
+//        }
+//        watch.Stop();
+//        log?.WriteLine($"\t=>Slice=>First=>Span: acc={acc}, {watch.ElapsedMilliseconds}ms");
+
+//        watch = Stopwatch.StartNew();
+//        for (int i = 0; i < LOOP; i++)
+//        {
+//            acc = 0;
+//            rob = new ReadableBuffer(data);
+//            while (!rob.IsEmpty)
+//            {
+//#if RUNACC
+//                acc ^= Acc(rob.First.Slice(0, 2).Span);
+//#endif
+//                rob = rob.Slice(2);
+//            }
+//        }
+//        watch.Stop();
+//        log?.WriteLine($"\t=>First=>Slice=>Span: acc={acc}, {watch.ElapsedMilliseconds}ms");
+
+//        watch = Stopwatch.StartNew();
+//        for (int i = 0; i < LOOP; i++)
+//        {
+//            acc = 0;
+//            rob = new ReadableBuffer(data);
+//            while (!rob.IsEmpty)
+//            {
+//#if RUNACC
+//                acc ^= Acc(rob.First.Span.Slice(0, 2));
+//#endif
+//                rob = rob.Slice(2);
+//            }
+//        }
+//        watch.Stop();
+//        log?.WriteLine($"\t=>First=>Span=>Slice: acc={acc}, {watch.ElapsedMilliseconds}ms");
+
+
+//        rob = ReadableBuffer.Create(data);
+////        var drob = new DoubleBufferedReadableBuffer(rob);
+////        log?.WriteLine("");
+////        log?.WriteLine($"DoubleBufferedReadableBuffer, {nameof(drob.IsSingleSpan)}={drob.IsSingleSpan}");
+
+////        watch = Stopwatch.StartNew();
+////        for (int i = 0; i < LOOP; i++)
+////        {
+////            acc = 0;
+////            drob = new DoubleBufferedReadableBuffer(rob);
+////            while (!drob.IsEmpty)
+////            {
+////#if RUNACC
+////                acc ^= Acc(drob.First.Slice(0, 2).Span);
+////#endif
+////                drob = drob.Slice(2);
+////            }
+////        }
+////        watch.Stop();
+////        log?.WriteLine($"\t=>First=>Slice=>Span: acc={acc}, {watch.ElapsedMilliseconds}ms");
+
+////        watch = Stopwatch.StartNew();
+////        for (int i = 0; i < LOOP; i++)
+////        {
+////            acc = 0;
+////            drob = new DoubleBufferedReadableBuffer(rob);
+////            while (!drob.IsEmpty)
+////            {
+////#if RUNACC
+////                acc ^= Acc(drob.First.Span.Slice(0, 2));
+////#endif
+////                drob = drob.Slice(2);
+////            }
+////        }
+////        watch.Stop();
+////        log?.WriteLine($"\t=>First=>Span=>Slice: acc={acc}, {watch.ElapsedMilliseconds}ms");
+
+
+//    }
     static async Task<int> Main()
     {
         try
@@ -221,9 +220,13 @@ public class SimpleUsage : IDisposable
         var rand = new Random(1234);
         var customer = InventCustomer(rand);
 
+#if VERBOSE        
+        // ExecuteBigArrayWork(customer, 1, Console.Out);
+#else
         ExecuteBigArrayWork(customer, 1, null);
         ExecuteBigArrayWork(customer, 10, Console.Out);
-            
+#endif
+
         await ExecuteBigFileWork(customer, 1, null); // for JIT etc
         await ExecuteBigFileWork(customer, 10, Console.Out);
 
@@ -239,16 +242,16 @@ public class SimpleUsage : IDisposable
 
             await DescribeAsync(new ValueTask<Customer>(Serializer.Deserialize<Customer>(ms)), "protobuf-net");
 
-            var options = new PipeOptions(new MemoryPool());
+            // var options = new PipeOptions(new MemoryPool());
 
             Console.WriteLine("v2 deserialize...");
 
-            var reader = await CreateIPipeReader(range);
-            await DescribeAsync(Ser2Example.Instance.DeserializeAsync<Customer>(reader), "v2 async");
+            //var reader = await CreateIPipeReader(range);
+            //await DescribeAsync(Ser2Example.Instance.DeserializeAsync<Customer>(reader), "v2 async");
 
-            var buffer = new ReadOnlyBuffer(range.Array, range.Offset, range.Count);
-            await DescribeAsync(new ValueTask<Customer>(Ser2Example.Instance.Deserialize<Customer>(ref buffer)), "v2 sync");
-            await DescribeAsync(new ValueTask<Customer>(Ser2Example.Instance.Deserialize<Customer>(ref buffer)), "v2 sync again");
+            var buffer = ReadableBuffer.Create(range.Array, range.Offset, range.Count);
+            //await DescribeAsync(new ValueTask<Customer>(Ser2Example.Instance.Deserialize<Customer>(ref buffer)), "v2 sync");
+            //await DescribeAsync(new ValueTask<Customer>(Ser2Example.Instance.Deserialize<Customer>(ref buffer)), "v2 sync again");
 
             await DescribeAsync(new ValueTask<Customer>(AggressiveDeserializer.Instance.Deserialize<Customer>(buffer)), "v2 aggressive");
             await DescribeAsync(new ValueTask<Customer>(AggressiveDeserializer.Instance.Deserialize<Customer>(buffer)), "v2 aggressive again");
@@ -269,14 +272,14 @@ public class SimpleUsage : IDisposable
 
             Console.WriteLine($"protobuf-net current: {watch.ElapsedMilliseconds}ms");
 
-            watch = Stopwatch.StartNew();
-            for (int i = 0; i < LOOP; i++)
-            {
-                GC.KeepAlive(Ser2Example.Instance.Deserialize<Customer>(ref buffer));
-            }
-            watch.Stop();
+            //watch = Stopwatch.StartNew();
+            //for (int i = 0; i < LOOP; i++)
+            //{
+            //    GC.KeepAlive(Ser2Example.Instance.Deserialize<Customer>(ref buffer));
+            //}
+            //watch.Stop();
 
-            Console.WriteLine($"via BufferReader API: {watch.ElapsedMilliseconds}ms");
+            //Console.WriteLine($"via ReadableBufferReader API: {watch.ElapsedMilliseconds}ms");
 
             watch = Stopwatch.StartNew();
             for (int i = 0; i < LOOP; i++)
@@ -285,13 +288,13 @@ public class SimpleUsage : IDisposable
             }
             watch.Stop();
 
-            Console.WriteLine($"via aggressive BufferReader API: {watch.ElapsedMilliseconds}ms");
+            Console.WriteLine($"via aggressive ReadableBufferReader API: {watch.ElapsedMilliseconds}ms");
         }
     }
 
-    private static int CountSpans(ref ReadOnlyBuffer buffer)
+    private static int CountSpans(ref ReadableBuffer buffer)
     {
-        var reader = new BufferReader(buffer);
+        var reader = new ReadableBufferReader(buffer);
         int count = 0;
         while (!reader.End)
         {
@@ -324,19 +327,19 @@ public class SimpleUsage : IDisposable
             }
             Memory<byte> buffer = range;
 
-            var task = SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, buffer, false, preferSync: false);
-            await DescribeAsync(task, "new code, old encoder (prefer async)");
+            //var task = SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, buffer, false, preferSync: false);
+            //await DescribeAsync(task, "new code, old encoder (prefer async)");
 
-            task = SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, buffer, false, preferSync: true);
-            await DescribeAsync(task, "new code, old encoder (prefer sync)");
+            //task = SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, buffer, false, preferSync: true);
+            //await DescribeAsync(task, "new code, old encoder (prefer sync)");
 
-            using (var reader = await CreatePipeReader(range))
-            {
-                PipeReader.ResetPeekCounts();
-                task = SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, reader);
-                var typed = reader as PipeReader;
-                await DescribeAsync(task, $"new code, old encoder (pipe); {typed?.ReadCount} reads, {typed?.PeekCount} peeks, {PipeReader.SingleSpanPeek} single, {PipeReader.MultiSpanPeek} multi");
-            }
+            //using (var reader = await CreatePipeReader(range))
+            //{
+            //    PipeReader.ResetPeekCounts();
+            //    task = SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, reader);
+            //    var typed = reader as PipeReader;
+            //    await DescribeAsync(task, $"new code, old encoder (pipe); {typed?.ReadCount} reads, {typed?.PeekCount} peeks, {PipeReader.SingleSpanPeek} single, {PipeReader.MultiSpanPeek} multi");
+            //}
 
             //task = SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, buffer, true);
             //if (task.IsCompleted)
@@ -359,44 +362,44 @@ public class SimpleUsage : IDisposable
             watch.Stop();
             Console.WriteLine($"old sync code, old encoder: {watch.ElapsedMilliseconds}ms");
 
-            watch = Stopwatch.StartNew();
-            for (int i = 0; i < LOOP; i++)
-            {
-                GC.KeepAlive(await SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, buffer, false, preferSync: false));
-            }
-            watch.Stop();
-            Console.WriteLine($"new async code, old encoder (prefer async): {watch.ElapsedMilliseconds}ms");
+            //watch = Stopwatch.StartNew();
+            //for (int i = 0; i < LOOP; i++)
+            //{
+            //    GC.KeepAlive(await SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, buffer, false, preferSync: false));
+            //}
+            //watch.Stop();
+            //Console.WriteLine($"new async code, old encoder (prefer async): {watch.ElapsedMilliseconds}ms");
 
-            watch = Stopwatch.StartNew();
-            for (int i = 0; i < LOOP; i++)
-            {
-                GC.KeepAlive(await SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, buffer, false, preferSync: true));
-            }
-            watch.Stop();
-            Console.WriteLine($"new async code, old encoder (prefer sync): {watch.ElapsedMilliseconds}ms");
+            //watch = Stopwatch.StartNew();
+            //for (int i = 0; i < LOOP; i++)
+            //{
+            //    GC.KeepAlive(await SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, buffer, false, preferSync: true));
+            //}
+            //watch.Stop();
+            //Console.WriteLine($"new async code, old encoder (prefer sync): {watch.ElapsedMilliseconds}ms");
 
 
-            watch = Stopwatch.StartNew();
-            var pipes = new PipeReader[LOOP];
-            for (int i = 0; i < pipes.Length; i++)
-            {
-                pipes[i] = await CreatePipeReader(range);
-            }
-            watch.Stop();
-            Console.WriteLine($"preparing {LOOP} pipes: {watch.ElapsedMilliseconds}ms");
+            //watch = Stopwatch.StartNew();
+            //var pipes = new PipeReader[LOOP];
+            //for (int i = 0; i < pipes.Length; i++)
+            //{
+            //    pipes[i] = await CreatePipeReader(range);
+            //}
+            //watch.Stop();
+            //Console.WriteLine($"preparing {LOOP} pipes: {watch.ElapsedMilliseconds}ms");
 
-            watch = Stopwatch.StartNew();
-            for (int i = 0; i < LOOP; i++)
-            {
-                using (var reader = pipes[i])
-                {
-                    GC.KeepAlive(await SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, reader));
-                }
-            }
-            watch.Stop();
-            Console.WriteLine($"new async code, old encoder (pipe): {watch.ElapsedMilliseconds}ms");
+            //watch = Stopwatch.StartNew();
+            //for (int i = 0; i < LOOP; i++)
+            //{
+            //    using (var reader = pipes[i])
+            //    {
+            //        GC.KeepAlive(await SerializerExtensions.DeserializeAsync<Customer>(CustomSerializer.Instance, reader));
+            //    }
+            //}
+            //watch.Stop();
+            //Console.WriteLine($"new async code, old encoder (pipe): {watch.ElapsedMilliseconds}ms");
 
-            pipes = null;
+            //pipes = null;
 
             //watch = Stopwatch.StartNew();
             //for (int i = 0; i < LOOP; i++)
@@ -412,7 +415,11 @@ public class SimpleUsage : IDisposable
     {
         using (var ms = new MemoryStream())
         {
+#if VERBOSE
+            const int CUSTOMER_COUNT = 1;
+#else
             const int CUSTOMER_COUNT = 250;
+#endif
             Serializer.SerializeWithLengthPrefix(ms, customer, PrefixStyle.Base128, 1);
             if (!ms.TryGetBuffer(out var segment)) segment = new ArraySegment<byte>(ms.ToArray());
 
@@ -425,10 +432,14 @@ public class SimpleUsage : IDisposable
             // and get the final composite
             if (!ms.TryGetBuffer(out segment)) segment = new ArraySegment<byte>(ms.ToArray());
 
+#if VERBOSE
+            const int REPEATS_PER_TIMING = 1;
+#else
             const int REPEATS_PER_TIMING = 5;
+#endif
             output?.WriteLine($"Memory data: {segment.Count} bytes; each timing is {REPEATS_PER_TIMING} repeats");
 
-            var buffer = new ReadOnlyBuffer(segment.Array, segment.Offset, segment.Count);
+            var buffer = ReadableBuffer.Create(segment.Array, segment.Offset, segment.Count);
 
             for (int i = 0; i < loopCount; i++)
             {
@@ -517,7 +528,7 @@ public class SimpleUsage : IDisposable
 
                 file.Position = 0;
                 Collect();
-                using (var pipe = new StreamPipeConnection(_pipeConfig, file))
+                using (var pipe = new StreamPipeConnection(_pipeFactory, file))
                 {
                     //var obj = new CustomerMagicWrapper();
                     //try
@@ -629,18 +640,18 @@ public class SimpleUsage : IDisposable
         var pipe = await CreatePipe(range);
         return pipe.Reader;
     }
-    private static async ValueTask<PipeReader> CreatePipeReader(ArraySegment<byte> range)
-    {
-        var pipe = await CreatePipe(range);
-        return new PipeReader(pipe.Reader, true);
-    }
+    //private static async ValueTask<PipeReader> CreatePipeReader(ArraySegment<byte> range)
+    //{
+    //    var pipe = await CreatePipe(range);
+    //    return new PipeReader(pipe.Reader, true);
+    //}
 
-    static readonly PipeOptions _pipeConfig = new PipeOptions(new MemoryPool());
-    private static async ValueTask<Pipe> CreatePipe(ArraySegment<byte> range)
+    static readonly PipeFactory _pipeFactory = new PipeFactory(new MemoryPool());
+    private static async ValueTask<IPipe> CreatePipe(ArraySegment<byte> range)
     {
         var ms = new MemoryStream(range.Array, range.Offset, range.Count);
-        var pipe = new Pipe(_pipeConfig);
-        await pipe.WriteAsync(range);
+        var pipe = _pipeFactory.Create();
+        await pipe.Writer.WriteAsync(range);
         pipe.Writer.Complete();
         return pipe;
     }
@@ -704,7 +715,7 @@ public class SimpleUsage : IDisposable
             Console.WriteLine("Running...");
             using (var rig = new SimpleUsage())
             {
-                rig.RunGoogleTests().Wait();
+                // rig.RunGoogleTests().Wait();
             }
         }
         catch (Exception ex)
@@ -719,53 +730,54 @@ public class SimpleUsage : IDisposable
 
         }
     }
-    // see example in: https://developers.google.com/protocol-buffers/docs/encoding
-    public async Task RunGoogleTests()
-    {
-        await Console.Out.WriteLineAsync(nameof(ReadTest1));
-        await ReadTest1();
 
-        await Console.Out.WriteLineAsync();
-        await Console.Out.WriteLineAsync(nameof(ReadTest2));
-        await ReadTest2();
+    //// see example in: https://developers.google.com/protocol-buffers/docs/encoding
+    //public async Task RunGoogleTests()
+    //{
+    //    await Console.Out.WriteLineAsync(nameof(ReadTest1));
+    //    await ReadTest1();
 
-        await Console.Out.WriteLineAsync();
-        await Console.Out.WriteLineAsync(nameof(ReadTest3));
-        await ReadTest3();
+    //    await Console.Out.WriteLineAsync();
+    //    await Console.Out.WriteLineAsync(nameof(ReadTest2));
+    //    await ReadTest2();
 
-        await Console.Out.WriteLineAsync();
-        await Console.Out.WriteLineAsync(nameof(WriteTest1));
-        await WriteTest1();
+    //    await Console.Out.WriteLineAsync();
+    //    await Console.Out.WriteLineAsync(nameof(ReadTest3));
+    //    await ReadTest3();
 
-        await Console.Out.WriteLineAsync();
-        await Console.Out.WriteLineAsync(nameof(WriteTest2));
-        await WriteTest2();
+    //    await Console.Out.WriteLineAsync();
+    //    await Console.Out.WriteLineAsync(nameof(WriteTest1));
+    //    await WriteTest1();
 
-        await Console.Out.WriteLineAsync();
-        await Console.Out.WriteLineAsync(nameof(WriteTest3));
-        await WriteTest3();
+    //    await Console.Out.WriteLineAsync();
+    //    await Console.Out.WriteLineAsync(nameof(WriteTest2));
+    //    await WriteTest2();
 
-    }
+    //    await Console.Out.WriteLineAsync();
+    //    await Console.Out.WriteLineAsync(nameof(WriteTest3));
+    //    await WriteTest3();
 
-    [Xunit.Fact]
-    public Task ReadTest1() => ReadTest<Test1>("08 96 01", DeserializeTest1Async, "A: 150");
+    //}
 
-    [Xunit.Fact]
-    public Task WriteTest1() => WriteTest(new Test1 { A = 150 }, "08 96 01", SerializeTest1Async);
+    //[Xunit.Fact]
+    //public Task ReadTest1() => ReadTest<Test1>("08 96 01", DeserializeTest1Async, "A: 150");
 
-    [Xunit.Fact]
-    public Task ReadTest2() => ReadTest<Test2>("12 07 74 65 73 74 69 6e 67", DeserializeTest2Async, "B: testing");
+    //[Xunit.Fact]
+    //public Task WriteTest1() => WriteTest(new Test1 { A = 150 }, "08 96 01", SerializeTest1Async);
 
-    [Xunit.Fact]
-    public Task WriteTest2() => WriteTest(new Test2 { B = "testing" }, "12 07 74 65 73 74 69 6e 67", SerializeTest2Async);
+    //[Xunit.Fact]
+    //public Task ReadTest2() => ReadTest<Test2>("12 07 74 65 73 74 69 6e 67", DeserializeTest2Async, "B: testing");
+
+    //[Xunit.Fact]
+    //public Task WriteTest2() => WriteTest(new Test2 { B = "testing" }, "12 07 74 65 73 74 69 6e 67", SerializeTest2Async);
 
 
-    // note I've suffixed with another dummy "1" field to test the end sub-object code
-    [Xunit.Fact]
-    public Task ReadTest3() => ReadTest<Test3>("1a 03 08 96 01 08 96 01", DeserializeTest3Async, "C: [A: 150]");
+    //// note I've suffixed with another dummy "1" field to test the end sub-object code
+    //[Xunit.Fact]
+    //public Task ReadTest3() => ReadTest<Test3>("1a 03 08 96 01 08 96 01", DeserializeTest3Async, "C: [A: 150]");
 
-    [Xunit.Fact]
-    public Task WriteTest3() => WriteTest(new Test3 { C = new Test1 { A = 150 } }, "1a 03 08 96 01", SerializeTest3Async);
+    //[Xunit.Fact]
+    //public Task WriteTest3() => WriteTest(new Test3 { C = new Test1 { A = 150 } }, "1a 03 08 96 01", SerializeTest3Async);
 
     class Test1
     {
@@ -795,126 +807,126 @@ public class SimpleUsage : IDisposable
     }
 
     // note: this code would be spat out my the roslyn generator API
-    async ValueTask<Test1> DeserializeTest1Async(
-        AsyncProtoReader reader, Test1 value = default(Test1))
-    {
-        Trace($"Reading {nameof(Test1)} fields...");
-        while (await reader.ReadNextFieldAsync())
-        {
-            Trace($"Reading {nameof(Test1)} field {reader.FieldNumber}...");
-            switch (reader.FieldNumber)
-            {
-                case 1:
-                    (value ?? Create(ref value)).A = await reader.ReadInt32Async();
-                    break;
-                default:
-                    await reader.SkipFieldAsync();
-                    break;
-            }
-            Trace($"Reading next {nameof(Test1)} field...");
-        }
-        Trace($"Reading {nameof(Test1)} fields complete");
-        return value ?? Create(ref value);
-    }
+    //async ValueTask<Test1> DeserializeTest1Async(
+    //    AsyncProtoReader reader, Test1 value = default(Test1))
+    //{
+    //    Trace($"Reading {nameof(Test1)} fields...");
+    //    while (await reader.ReadNextFieldAsync())
+    //    {
+    //        Trace($"Reading {nameof(Test1)} field {reader.FieldNumber}...");
+    //        switch (reader.FieldNumber)
+    //        {
+    //            case 1:
+    //                (value ?? Create(ref value)).A = await reader.ReadInt32Async();
+    //                break;
+    //            default:
+    //                await reader.SkipFieldAsync();
+    //                break;
+    //        }
+    //        Trace($"Reading next {nameof(Test1)} field...");
+    //    }
+    //    Trace($"Reading {nameof(Test1)} fields complete");
+    //    return value ?? Create(ref value);
+    //}
 
-    async ValueTask<long> SerializeTest1Async(AsyncProtoWriter writer, Test1 value)
-    {
-        long bytes = 0;
-        if (value != null)
-        {
-            Trace($"Writing {nameof(Test1)} fields...");
-            bytes += await writer.WriteVarintInt32Async(1, value.A);
-            Trace($"Writing {nameof(Test1)} field complete");
-        }
-        return bytes;
-    }
-    async ValueTask<long> SerializeTest2Async(AsyncProtoWriter writer, Test2 value)
-    {
-        long bytes = 0;
-        if (value != null)
-        {
-            Trace($"Writing {nameof(Test2)} fields...");
-            bytes += await writer.WriteStringAsync(2, value.B);
-            Trace($"Writing {nameof(Test2)} field complete");
-        }
-        return bytes;
-    }
+    //async ValueTask<long> SerializeTest1Async(AsyncProtoWriter writer, Test1 value)
+    //{
+    //    long bytes = 0;
+    //    if (value != null)
+    //    {
+    //        Trace($"Writing {nameof(Test1)} fields...");
+    //        bytes += await writer.WriteVarintInt32Async(1, value.A);
+    //        Trace($"Writing {nameof(Test1)} field complete");
+    //    }
+    //    return bytes;
+    //}
+    //async ValueTask<long> SerializeTest2Async(AsyncProtoWriter writer, Test2 value)
+    //{
+    //    long bytes = 0;
+    //    if (value != null)
+    //    {
+    //        Trace($"Writing {nameof(Test2)} fields...");
+    //        bytes += await writer.WriteStringAsync(2, value.B);
+    //        Trace($"Writing {nameof(Test2)} field complete");
+    //    }
+    //    return bytes;
+    //}
 
-    async ValueTask<long> SerializeTest3Async(AsyncProtoWriter writer, Test3 value)
-    {
-        long bytes = 0;
-        if (value != null)
-        {
-            Trace($"Writing {nameof(Test3)} fields...");
-            bytes += await writer.WriteSubObject(3, value.C, (α, β) => SerializeTest1Async(α, β));
-            Trace($"Writing {nameof(Test3)} field complete");
-        }
-        return bytes;
-    }
+    //async ValueTask<long> SerializeTest3Async(AsyncProtoWriter writer, Test3 value)
+    //{
+    //    long bytes = 0;
+    //    if (value != null)
+    //    {
+    //        Trace($"Writing {nameof(Test3)} fields...");
+    //        bytes += await writer.WriteSubObject(3, value.C, (α, β) => SerializeTest1Async(α, β));
+    //        Trace($"Writing {nameof(Test3)} field complete");
+    //    }
+    //    return bytes;
+    //}
 
-    private async Task ReadTest<T>(string hex, Func<AsyncProtoReader, T, ValueTask<T>> deserializer, string expected)
-    {
-        await ReadTestPipe<T>(hex, deserializer, expected);
-        await ReadTestBuffer<T>(hex, deserializer, expected);
-    }
-    private async Task ReadTestPipe<T>(string hex, Func<AsyncProtoReader, T, ValueTask<T>> deserializer, string expected)
-    {
-        var pipe = new Pipe(_options);
-        await AppendPayloadAsync(pipe, hex);
-        pipe.Writer.Complete(); // simulate EOF
+    //private async Task ReadTest<T>(string hex, Func<AsyncProtoReader, T, ValueTask<T>> deserializer, string expected)
+    //{
+    //    await ReadTestPipe<T>(hex, deserializer, expected);
+    //    await ReadTestBuffer<T>(hex, deserializer, expected);
+    //}
+    //private async Task ReadTestPipe<T>(string hex, Func<AsyncProtoReader, T, ValueTask<T>> deserializer, string expected)
+    //{
+    //    var pipe = new Pipe(_options);
+    //    await AppendPayloadAsync(pipe, hex);
+    //    pipe.Writer.Complete(); // simulate EOF
 
-        Trace($"deserializing via {nameof(PipeReader)}...");
-        using (var reader = AsyncProtoReader.Create(pipe.Reader))
-        {
-            var obj = await deserializer(reader, default(T));
-            string actual = obj?.ToString();
-            await Console.Out.WriteLineAsync(actual);
-            Assert.Equal(expected, actual);
-        }
-    }
-    private async Task ReadTestBuffer<T>(string hex, Func<AsyncProtoReader, T, ValueTask<T>> deserializer, string expected)
-    {
-        var blob = ParseBlob(hex);
-        Trace($"deserializing via {nameof(MemoryReader)}...");
-        using (var reader = AsyncProtoReader.Create(blob, true))
-        {
-            var obj = await deserializer(reader, default(T));
-            string actual = obj?.ToString();
-            await Console.Out.WriteLineAsync(actual);
-            Assert.Equal(expected, actual);
-        }
-    }
+    //    Trace($"deserializing via {nameof(PipeReader)}...");
+    //    using (var reader = AsyncProtoReader.Create(pipe.Reader))
+    //    {
+    //        var obj = await deserializer(reader, default(T));
+    //        string actual = obj?.ToString();
+    //        await Console.Out.WriteLineAsync(actual);
+    //        Assert.Equal(expected, actual);
+    //    }
+    //}
+    //private async Task ReadTestBuffer<T>(string hex, Func<AsyncProtoReader, T, ValueTask<T>> deserializer, string expected)
+    //{
+    //    var blob = ParseBlob(hex);
+    //    Trace($"deserializing via {nameof(MemoryReader)}...");
+    //    using (var reader = AsyncProtoReader.Create(blob, true))
+    //    {
+    //        var obj = await deserializer(reader, default(T));
+    //        string actual = obj?.ToString();
+    //        await Console.Out.WriteLineAsync(actual);
+    //        Assert.Equal(expected, actual);
+    //    }
+    //}
 
-    private async Task WriteTest<T>(T value, string expected, Func<AsyncProtoWriter, T, ValueTask<long>> serializer)
-    {
-        long len = await WriteTestPipe(value, expected, serializer);
-        await WriteTestSpan(len, value, expected, serializer);
-    }
-    private async ValueTask<long> WriteTestPipe<T>(T value, string expected, Func<AsyncProtoWriter, T, ValueTask<long>> serializer)
-    {
-        long bytes;
-        string actual;
-        if (value == null)
-        {
-            bytes = 0;
-            actual = "";
-        }
-        else
-        {
-            var pipe = new Pipe(_options);
-            using (var writer = AsyncProtoWriter.Create(pipe.Writer))
-            {
-                bytes = await serializer(writer, value);
-                await Console.Out.WriteLineAsync($"Serialized to pipe in {bytes} bytes");
-                await writer.FlushAsync(true);
-            }
-            var blob = await ReadToEndBlobAsync(pipe.Reader);
-            actual = NormalizeHex(BitConverter.ToString(blob));
-        }
-        expected = NormalizeHex(expected);
-        Assert.Equal(expected, actual);
-        return bytes;
-    }
+    //private async Task WriteTest<T>(T value, string expected, Func<AsyncProtoWriter, T, ValueTask<long>> serializer)
+    //{
+    //    long len = await WriteTestPipe(value, expected, serializer);
+    //    await WriteTestSpan(len, value, expected, serializer);
+    //}
+    //private async ValueTask<long> WriteTestPipe<T>(T value, string expected, Func<AsyncProtoWriter, T, ValueTask<long>> serializer)
+    //{
+    //    long bytes;
+    //    string actual;
+    //    if (value == null)
+    //    {
+    //        bytes = 0;
+    //        actual = "";
+    //    }
+    //    else
+    //    {
+    //        var pipe = new Pipe(_options);
+    //        using (var writer = AsyncProtoWriter.Create(pipe.Writer))
+    //        {
+    //            bytes = await serializer(writer, value);
+    //            await Console.Out.WriteLineAsync($"Serialized to pipe in {bytes} bytes");
+    //            await writer.FlushAsync(true);
+    //        }
+    //        var blob = await ReadToEndBlobAsync(pipe.Reader);
+    //        actual = NormalizeHex(BitConverter.ToString(blob));
+    //    }
+    //    expected = NormalizeHex(expected);
+    //    Assert.Equal(expected, actual);
+    //    return bytes;
+    //}
 
     public static async Task<byte[]> ReadToEndBlobAsync(IPipeReader input)
     {
@@ -966,51 +978,51 @@ public class SimpleUsage : IDisposable
     }
 
     // note: this code would be spat out my the roslyn generator API
-    async ValueTask<Test2> DeserializeTest2Async(
-        AsyncProtoReader reader, Test2 value = default(Test2))
-    {
-        Trace($"Reading {nameof(Test2)} fields...");
-        while (await reader.ReadNextFieldAsync())
-        {
-            Trace($"Reading {nameof(Test2)} field {reader.FieldNumber}...");
-            switch (reader.FieldNumber)
-            {
-                case 2:
-                    (value ?? Create(ref value)).B = await reader.ReadStringAsync();
-                    break;
-                default:
-                    await reader.SkipFieldAsync();
-                    break;
-            }
-            Trace($"Reading next {nameof(Test2)} field...");
-        }
-        Trace($"Reading {nameof(Test2)} fields complete");
-        return value ?? Create(ref value);
-    }
+    //async ValueTask<Test2> DeserializeTest2Async(
+    //    AsyncProtoReader reader, Test2 value = default(Test2))
+    //{
+    //    Trace($"Reading {nameof(Test2)} fields...");
+    //    while (await reader.ReadNextFieldAsync())
+    //    {
+    //        Trace($"Reading {nameof(Test2)} field {reader.FieldNumber}...");
+    //        switch (reader.FieldNumber)
+    //        {
+    //            case 2:
+    //                (value ?? Create(ref value)).B = await reader.ReadStringAsync();
+    //                break;
+    //            default:
+    //                await reader.SkipFieldAsync();
+    //                break;
+    //        }
+    //        Trace($"Reading next {nameof(Test2)} field...");
+    //    }
+    //    Trace($"Reading {nameof(Test2)} fields complete");
+    //    return value ?? Create(ref value);
+    //}
 
-    async ValueTask<Test3> DeserializeTest3Async(
-        AsyncProtoReader reader, Test3 value = default(Test3))
-    {
-        Trace($"Reading {nameof(Test3)} fields...");
-        while (await reader.ReadNextFieldAsync())
-        {
-            Trace($"Reading {nameof(Test3)} field {reader.FieldNumber}...");
-            switch (reader.FieldNumber)
-            {
-                case 3:
-                    var token = (await reader.BeginSubObjectAsync()).Token;
-                    (value ?? Create(ref value)).C = await DeserializeTest1Async(reader, value?.C);
-                    reader.EndSubObject(ref token);
-                    break;
-                default:
-                    await reader.SkipFieldAsync();
-                    break;
-            }
-            Trace($"Reading next {nameof(Test3)} field...");
-        }
-        Trace($"Reading {nameof(Test3)} fields complete");
-        return value ?? Create(ref value);
-    }
+    //async ValueTask<Test3> DeserializeTest3Async(
+    //    AsyncProtoReader reader, Test3 value = default(Test3))
+    //{
+    //    Trace($"Reading {nameof(Test3)} fields...");
+    //    while (await reader.ReadNextFieldAsync())
+    //    {
+    //        Trace($"Reading {nameof(Test3)} field {reader.FieldNumber}...");
+    //        switch (reader.FieldNumber)
+    //        {
+    //            case 3:
+    //                var token = (await reader.BeginSubObjectAsync()).Token;
+    //                (value ?? Create(ref value)).C = await DeserializeTest1Async(reader, value?.C);
+    //                reader.EndSubObject(ref token);
+    //                break;
+    //            default:
+    //                await reader.SkipFieldAsync();
+    //                break;
+    //        }
+    //        Trace($"Reading next {nameof(Test3)} field...");
+    //    }
+    //    Trace($"Reading {nameof(Test3)} fields complete");
+    //    return value ?? Create(ref value);
+    //}
 
     static T Create<T>(ref T obj) where T : class, new() => obj ?? (obj = new T());
 
