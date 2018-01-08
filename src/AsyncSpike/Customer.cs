@@ -291,7 +291,7 @@ namespace ProtoBuf
                     OrderCount += customer.Orders.Count;
                     if(customer.Orders.Count != 40)
                     {
-                        throw new InvalidOperationException("huh?");
+                        throw new InvalidOperationException($"huh? customer '{customer?.Id}' has {customer?.Orders?.Count ?? -1} orders");
                     }
                 }
 #if DEBUG

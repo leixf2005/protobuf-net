@@ -45,7 +45,7 @@ namespace TheAwaitingGame
     public class Benchmarker
     {
         static ProtoBuf.Customer _customer;
-        static byte[] _blob;
+        static byte[] _customerBlob, _magicWrapperBlob;
         public Benchmarker()
         {
             // touch the static field to ensure .cctor has run
@@ -53,12 +53,24 @@ namespace TheAwaitingGame
         }
         static Benchmarker()
         {
-            var rand = new Random(12345);
+            var rand = new Random(1234); // seed correlates to asserted number of orders
             _customer = SimpleUsage.InventCustomer(rand);
 
             var ms = new MemoryStream();
             ProtoBuf.Serializer.Serialize(ms, _customer);
-            _blob = ms.ToArray();
+            _customerBlob = ms.ToArray();
+
+            const int CUSTOMER_COUNT = 250;
+
+            ms.SetLength(0);
+            ms.Position = 0;
+            for(int i = 0; i < CUSTOMER_COUNT; i++)
+            {
+                ProtoBuf.Serializer.SerializeWithLengthPrefix(ms, _customer, ProtoBuf.PrefixStyle.Base128, 1);
+            }
+            _magicWrapperBlob = ms.ToArray();
+
+
             //var book = new OrderBook();
             //for (int i = 0; i < 50; i++)
             //{
@@ -97,26 +109,50 @@ namespace TheAwaitingGame
         //        throw new InvalidOperationException("Baseline check failed");
         //}
 
-        const int REPEATS_PER_ITEM = 250;
+        const int REPEATS_PER_CUSTOMER = 250;
 
-        [Benchmark(OperationsPerInvoke = REPEATS_PER_ITEM)]
-        public void DeserializeWithStream()
+        [Benchmark(OperationsPerInvoke = REPEATS_PER_CUSTOMER, Description = "single, ReadOnlyBuffer")]
+        public void DeserializeSingleWithStream()
         {
-            var stream = new MemoryStream(_blob);
-            for(int i  = 0; i < REPEATS_PER_ITEM; i++)
+            var stream = new MemoryStream(_customerBlob);
+            for(int i  = 0; i < REPEATS_PER_CUSTOMER; i++)
             {
                 stream.Position = 0;
                 GC.KeepAlive(ProtoBuf.Serializer.Deserialize<ProtoBuf.Customer>(stream));
             }
         }
 
-        [Benchmark(OperationsPerInvoke = REPEATS_PER_ITEM)]
-        public void DeserializeWithBuffer()
+        [Benchmark(OperationsPerInvoke = REPEATS_PER_CUSTOMER, Description = "single, ReadOnlyBuffer")]
+        public void DeserializeSingleWithBuffer()
         {
-            var buffer = new ReadOnlyBuffer(_blob);
-            for (int i = 0; i < REPEATS_PER_ITEM; i++)
+            var buffer = new ReadOnlyBuffer(_customerBlob);
+            for (int i = 0; i < REPEATS_PER_CUSTOMER; i++)
             {
                 GC.KeepAlive(AggressiveDeserializer.Instance.Deserialize<ProtoBuf.Customer>(buffer));
+            }
+        }
+
+
+        const int REPEATS_PER_MAGIC_WRAPPER = 5;
+
+        [Benchmark(OperationsPerInvoke = REPEATS_PER_MAGIC_WRAPPER, Description = "multi, Stream")]
+        public void DeserializeMultiWithStream()
+        {
+            var stream = new MemoryStream(_magicWrapperBlob);
+            for (int i = 0; i < REPEATS_PER_MAGIC_WRAPPER; i++)
+            {
+                stream.Position = 0;
+                GC.KeepAlive(ProtoBuf.Serializer.Deserialize<ProtoBuf.CustomerMagicWrapper>(stream));
+            }
+        }
+
+        [Benchmark(OperationsPerInvoke = REPEATS_PER_MAGIC_WRAPPER, Description = "multi, ReadOnlyBuffer")]
+        public void DeserializeMultiWithBuffer()
+        {
+            var buffer = new ReadOnlyBuffer(_magicWrapperBlob);
+            for (int i = 0; i < REPEATS_PER_MAGIC_WRAPPER; i++)
+            {
+                GC.KeepAlive(AggressiveDeserializer.Instance.Deserialize<ProtoBuf.CustomerMagicWrapper>(buffer));
             }
         }
 
