@@ -43,7 +43,7 @@ namespace System.IO.Pipelines
         /// <param name="buffer">The <see cref="ReadableBuffer"/> to copy</param>
         /// <param name="stream">The target <see cref="Stream"/></param>
         /// <returns></returns>
-        public static Task CopyToAsync(this ReadableBuffer buffer, Stream stream)
+        public static Task CopyToAsync(this ReadOnlyBuffer buffer, Stream stream)
         {
             if (buffer.IsSingleSpan)
             {
@@ -53,7 +53,7 @@ namespace System.IO.Pipelines
             return CopyMultipleToStreamAsync(buffer, stream);
         }
 
-        private static async Task CopyMultipleToStreamAsync(this ReadableBuffer buffer, Stream stream)
+        private static async Task CopyMultipleToStreamAsync(this ReadOnlyBuffer buffer, Stream stream)
         {
             foreach (var memory in buffer)
             {
@@ -61,9 +61,9 @@ namespace System.IO.Pipelines
             }
         }
 
-        private static async Task WriteToStream(Stream stream, Buffer<byte> readOnlyMemory)
+        private static async Task WriteToStream(Stream stream, ReadOnlyMemory<byte> memory)
         {
-            if (readOnlyMemory.TryGetArray(out ArraySegment<byte> data))
+            if (MemoryMarshal.TryGetArray(memory, out ArraySegment<byte> data))
             {
                 await stream.WriteAsync(data.Array, data.Offset, data.Count)
                     .ConfigureAwait(continueOnCapturedContext: false);
@@ -71,7 +71,7 @@ namespace System.IO.Pipelines
             else
             {
                 // Copy required
-                var array = readOnlyMemory.ToArray();
+                var array = memory.ToArray();
                 await stream.WriteAsync(array, 0, array.Length).ConfigureAwait(continueOnCapturedContext: false);
             }
         }

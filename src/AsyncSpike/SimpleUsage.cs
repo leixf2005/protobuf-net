@@ -41,7 +41,7 @@ public class SimpleUsage : IDisposable
 
 //        ReadOnlyMemory<byte> memory;
 //        ReadOnlySpan<byte> span;
-//        ReadableBuffer rob;
+//        ReadOnlyBuffer rob;
 //        Stopwatch watch;
 //        int acc = 0;
 
@@ -249,7 +249,7 @@ public class SimpleUsage : IDisposable
             //var reader = await CreateIPipeReader(range);
             //await DescribeAsync(Ser2Example.Instance.DeserializeAsync<Customer>(reader), "v2 async");
 
-            var buffer = ReadableBuffer.Create(range.Array, range.Offset, range.Count);
+            var buffer = new ReadOnlyBuffer(range.Array, range.Offset, range.Count);
             //await DescribeAsync(new ValueTask<Customer>(Ser2Example.Instance.Deserialize<Customer>(ref buffer)), "v2 sync");
             //await DescribeAsync(new ValueTask<Customer>(Ser2Example.Instance.Deserialize<Customer>(ref buffer)), "v2 sync again");
 
@@ -279,7 +279,7 @@ public class SimpleUsage : IDisposable
             //}
             //watch.Stop();
 
-            //Console.WriteLine($"via ReadableBufferReader API: {watch.ElapsedMilliseconds}ms");
+            //Console.WriteLine($"via  BufferReader<ReadOnlyBuffer> API: {watch.ElapsedMilliseconds}ms");
 
             watch = Stopwatch.StartNew();
             for (int i = 0; i < LOOP; i++)
@@ -288,13 +288,13 @@ public class SimpleUsage : IDisposable
             }
             watch.Stop();
 
-            Console.WriteLine($"via aggressive ReadableBufferReader API: {watch.ElapsedMilliseconds}ms");
+            Console.WriteLine($"via aggressive  BufferReader<ReadOnlyBuffer> API: {watch.ElapsedMilliseconds}ms");
         }
     }
 
-    private static int CountSpans(ref ReadableBuffer buffer)
+    private static int CountSpans(ref ReadOnlyBuffer buffer)
     {
-        var reader = new ReadableBufferReader(buffer);
+        var reader = BufferReader.Create(buffer);
         int count = 0;
         while (!reader.End)
         {
@@ -439,7 +439,7 @@ public class SimpleUsage : IDisposable
 #endif
             output?.WriteLine($"Memory data: {segment.Count} bytes; each timing is {REPEATS_PER_TIMING} repeats");
 
-            var buffer = ReadableBuffer.Create(segment.Array, segment.Offset, segment.Count);
+            var buffer = new ReadOnlyBuffer(segment.Array, segment.Offset, segment.Count);
 
             for (int i = 0; i < loopCount; i++)
             {
@@ -528,7 +528,7 @@ public class SimpleUsage : IDisposable
 
                 file.Position = 0;
                 Collect();
-                using (var pipe = new StreamPipeConnection(_pipeFactory, file))
+                using (var pipe = new StreamPipeConnection(_options, file))
                 {
                     //var obj = new CustomerMagicWrapper();
                     //try
@@ -646,11 +646,11 @@ public class SimpleUsage : IDisposable
     //    return new PipeReader(pipe.Reader, true);
     //}
 
-    static readonly PipeFactory _pipeFactory = new PipeFactory(new MemoryPool());
+    static readonly PipeOptions _options = new PipeOptions(new MemoryPool());
     private static async ValueTask<IPipe> CreatePipe(ArraySegment<byte> range)
     {
         var ms = new MemoryStream(range.Array, range.Offset, range.Count);
-        var pipe = _pipeFactory.Create();
+        var pipe = new Pipe(_options);
         await pipe.Writer.WriteAsync(range);
         pipe.Writer.Complete();
         return pipe;

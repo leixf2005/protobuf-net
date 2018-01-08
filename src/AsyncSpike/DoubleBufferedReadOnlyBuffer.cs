@@ -51,7 +51,7 @@
 
 //        public Enumerator GetEnumerator() => new Enumerator(_first, _buffer.GetEnumerator());
 
-//        private readonly ReadableBuffer _buffer;
+//        private readonly ReadOnlyBuffer _buffer;
 //        private readonly ReadOnlyMemory<byte> _first;
 //        private readonly int _consumed;
 //        private readonly long _length;

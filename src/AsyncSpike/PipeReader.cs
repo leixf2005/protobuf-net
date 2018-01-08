@@ -14,7 +14,7 @@
 //        private readonly bool _closePipe;
 //        private volatile bool _isReading;
 //        DoubleBufferedReadableBuffer _available;
-//        ReadableBuffer _originalAsReceived;
+//        ReadOnlyBuffer _originalAsReceived;
 //        internal PipeReader(IPipeReader reader, bool closePipe, long bytes = long.MaxValue) : base(bytes)
 //        {
 //            _reader = reader;

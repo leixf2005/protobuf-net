@@ -9,8 +9,8 @@
 //        public static Ser2Example Instance { get; } = new Ser2Example();
 //        private Ser2Example() { }
 
-//        v2Result ISer2<Customer>.Deserialize(ref ReadableBufferReader reader, ref Customer value) => Deserialize(ref reader, ref value);
-//        v2Result ISer2<Order>.Deserialize(ref ReadableBufferReader reader, ref Order value) => Deserialize(ref reader, ref value);
+//        v2Result ISer2<Customer>.Deserialize(ref  BufferReader<ReadOnlyBuffer> reader, ref Customer value) => Deserialize(ref reader, ref value);
+//        v2Result ISer2<Order>.Deserialize(ref  BufferReader<ReadOnlyBuffer> reader, ref Order value) => Deserialize(ref reader, ref value);
 //        ValueTask<Order> ISer2<Order>.DeserializeAsync(System.IO.Pipelines.IPipeReader reader, Order value)
 //            => throw new NotSupportedException();
 
@@ -21,7 +21,7 @@
 
 
 
-//        private static v2Result Deserialize(ref ReadableBufferReader reader, ref Order value)
+//        private static v2Result Deserialize(ref  BufferReader<ReadOnlyBuffer> reader, ref Order value)
 //        {
 //            Order Create(ref Order obj) => obj ?? (obj = new Order());
 
@@ -74,7 +74,7 @@
 //            }
 //        }
 
-//        private static v2Result Deserialize(ref ReadableBufferReader reader, ref Customer value)
+//        private static v2Result Deserialize(ref  BufferReader<ReadOnlyBuffer> reader, ref Customer value)
 //        {
 //            Customer Create(ref Customer obj) => obj ?? (obj = new Customer());
 

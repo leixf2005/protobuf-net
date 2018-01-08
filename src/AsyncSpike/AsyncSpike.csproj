@@ -5,14 +5,14 @@
     <TargetFramework>netcoreapp2.0</TargetFramework>
     <CoreFxVersion>4.4.0</CoreFxVersion>
     <FrameworkTargetVer>4.5.0-preview1-26108-02</FrameworkTargetVer>
-    <CoreFxLabVersion>0.1.0-e170810-2</CoreFxLabVersion>
+    <CoreFxLabVersion>0.1.0-e180108-4</CoreFxLabVersion>
     <!--<RoslynVersion>2.3.0-rdonly-ref-61607-04</RoslynVersion>-->
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)'=='Debug'">
-    <DefineConstants>$(DefineConstants);VERBOSE</DefineConstants>
+    <!-- <DefineConstants>$(DefineConstants);VERBOSE</DefineConstants> -->
   </PropertyGroup>
   <ItemGroup>
     <!--<PackageReference Include="System.Buffers" Version="$(CoreFxVersion)" />
@@ -33,9 +33,8 @@
     <PackageReference Include="System.Runtime.CompilerServices.Unsafe" Version="$(FrameworkTargetVer)" />
     <PackageReference Include="System.Memory" Version="$(FrameworkTargetVer)" />
     <PackageReference Include="System.Threading.Tasks.Extensions" Version="$(FrameworkTargetVer)" />
+    
     <PackageReference Include="System.IO.Pipelines" Version="$(CoreFxLabVersion)" />
-
-    <!-- not actually using this yet -->
     <PackageReference Include="System.Buffers.Primitives" Version="$(CoreFxLabVersion)" />
   </ItemGroup>
   <ItemGroup>

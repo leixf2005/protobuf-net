@@ -15,7 +15,7 @@
 //    }
 //    interface ISer2<T>
 //    {
-//        v2Result Deserialize(ref ReadableBufferReader reader, ref T value);
+//        v2Result Deserialize(ref  BufferReader<ReadOnlyBuffer> reader, ref T value);
 //        ValueTask<T> DeserializeAsync(IPipeReader reader, T value);
 //    }
 
@@ -40,7 +40,7 @@
 //                    return default;
 //            }
 //        }
-//        public static bool TrySkip(ref this ReadableBufferReader reader, int length)
+//        public static bool TrySkip(ref this  BufferReader<ReadOnlyBuffer> reader, int length)
 //        {
 //            try
 //            {
@@ -52,7 +52,7 @@
 //                return false;
 //            }
 //        }
-//        public static bool TrySkipField(ref this ReadableBufferReader reader, WireType wireType)
+//        public static bool TrySkipField(ref this  BufferReader<ReadOnlyBuffer> reader, WireType wireType)
 //        {
 //            switch (wireType)
 //            {
@@ -69,9 +69,9 @@
 //                    return ThrowNotSupported(wireType);
 //            }
 //        }
-//        private static uint? TryReadRawUInt32(ref this ReadableBufferReader reader)
+//        private static uint? TryReadRawUInt32(ref this  BufferReader<ReadOnlyBuffer> reader)
 //        {
-//            uint Fast(ref ReadableBufferReader buffer)
+//            uint Fast(ref  BufferReader<ReadOnlyBuffer> buffer)
 //            {
 //                int index = buffer.Index;
 //                var span = buffer.Span;
@@ -80,7 +80,7 @@
 //                return val;
 //            }
 
-//            uint? Slow(ref ReadableBufferReader buffer)
+//            uint? Slow(ref  BufferReader<ReadOnlyBuffer> buffer)
 //            {
 //                int a = buffer.Take(), b = buffer.Take(), c = buffer.Take(), d = buffer.Take();
 //                if (a < 0 || b < 0 || c < 0 || d < 0) return null;
@@ -90,12 +90,12 @@
 //            return reader.HasSpan(4) ? Fast(ref reader) : Slow(ref reader);
 //        }
 
-//        private static bool HasSpan(ref this ReadableBufferReader reader, int bytes)
+//        private static bool HasSpan(ref this  BufferReader<ReadOnlyBuffer> reader, int bytes)
 //           => reader.Span.Length >= reader.Index + bytes;
 
-//        private static ulong? TryReadRawUInt64(ref this ReadableBufferReader reader)
+//        private static ulong? TryReadRawUInt64(ref this  BufferReader<ReadOnlyBuffer> reader)
 //        {
-//            ulong Fast(ref ReadableBufferReader buffer)
+//            ulong Fast(ref  BufferReader<ReadOnlyBuffer> buffer)
 //            {
 //                int index = buffer.Index;
 //                var span = buffer.Span;
@@ -105,7 +105,7 @@
 //                return (ulong)lo | ((ulong)hi) << 32;
 //            }
 
-//            ulong? Slow(ref ReadableBufferReader buffer)
+//            ulong? Slow(ref  BufferReader<ReadOnlyBuffer> buffer)
 //            {
 //                int a = buffer.Take(), b = buffer.Take(), c = buffer.Take(), d = buffer.Take(),
 //                    e = buffer.Take(), f = buffer.Take(), g = buffer.Take(), h = buffer.Take();
@@ -125,7 +125,7 @@
 //            return checked((int)l);
 //        }
 
-//        public static int? TryReadInt32(ref this ReadableBufferReader reader, WireType wireType)
+//        public static int? TryReadInt32(ref this  BufferReader<ReadOnlyBuffer> reader, WireType wireType)
 //        {
 //            switch (wireType)
 //            {
@@ -157,14 +157,14 @@
 //        }
 
 //        //// it is *not* a mistake that this isn't "ref this"; this is intended as a peek - side-effects are local
-//        //public static bool IsField(this ReadableBufferReader reader, int fieldNumber)
+//        //public static bool IsField(this  BufferReader<ReadOnlyBuffer> reader, int fieldNumber)
 //        //    => checked((int)(reader.TryReadVarint().GetValueOrDefault() >> 3)) == fieldNumber;
 
 
 
 //        // slices a portion of a reader out to a separate reader; note that from the caller's
 //        // perspective the reader will have progressed
-//        public static ReadableBufferReader Slice(ref this ReadableBufferReader reader, int start, int length)
+//        public static  BufferReader<ReadOnlyBuffer> Slice(ref this  BufferReader<ReadOnlyBuffer> reader, int start, int length)
 //        {
 //            if(start != 0) reader.Skip(start);
 
@@ -183,7 +183,7 @@
 //            return result;
 //        }
 
-//        private static unsafe string GetHex(this ReadableBufferReader reader, int len)
+//        private static unsafe string GetHex(this  BufferReader<ReadOnlyBuffer> reader, int len)
 //        {
 //            const string HEX = "0123456789ABCDEF";
 //            var c = stackalloc char[len * 2];
@@ -199,7 +199,7 @@
 //            }
 //            return new string(c, 0, 2 * i);
 //        }
-//        public static (bool Result, int Bytes) HasEntireSubObject(ref this ReadableBufferReader reader, WireType wireType)
+//        public static (bool Result, int Bytes) HasEntireSubObject(ref this  BufferReader<ReadOnlyBuffer> reader, WireType wireType)
 //        {
 //            switch(wireType)
 //            {
@@ -223,7 +223,7 @@
 //            }
 //            return (false, 0);
 //        }
-//        public static double? TryReadDouble(ref this ReadableBufferReader reader, WireType wireType)
+//        public static double? TryReadDouble(ref this  BufferReader<ReadOnlyBuffer> reader, WireType wireType)
 //        {
 //            switch (wireType)
 //            {
@@ -240,9 +240,9 @@
 //        }
 
 //        static readonly Encoding Encoding = Encoding.UTF8;
-//        public static string TryReadString(ref this ReadableBufferReader reader, WireType wireType)
+//        public static string TryReadString(ref this  BufferReader<ReadOnlyBuffer> reader, WireType wireType)
 //        {
-//            unsafe string Fast(ref ReadableBufferReader buffer, int bytes)
+//            unsafe string Fast(ref  BufferReader<ReadOnlyBuffer> buffer, int bytes)
 //            {
 //                string s;
 //                fixed (byte* ptr = &MemoryMarshal.GetReference(buffer.Span))
@@ -252,7 +252,7 @@
 //                buffer.Skip(bytes);
 //                return s;
 //            }
-//            unsafe string Slow(ref ReadableBufferReader buffer, int bytes)
+//            unsafe string Slow(ref  BufferReader<ReadOnlyBuffer> buffer, int bytes)
 //            {
 //                var decoder = Encoding.GetDecoder();
 //                int bytesLeft = bytes;
@@ -309,7 +309,7 @@
 //            return reader.HasSpan(len) ? Fast(ref reader, len) : Slow(ref reader, len);
 //        }
 
-//        public static (int FieldNumber, WireType WireType) ReadNextField(ref this ReadableBufferReader reader)
+//        public static (int FieldNumber, WireType WireType) ReadNextField(ref this  BufferReader<ReadOnlyBuffer> reader)
 //        {
 //            var next = reader.TryReadVarint();
 //            if (next == null) return default;
@@ -317,9 +317,9 @@
 //            ulong x = next.GetValueOrDefault();
 //            return (checked((int)(x >> 3)), (WireType)(int)(x & 7));
 //        }
-//        public static ulong? TryReadVarint(ref this ReadableBufferReader reader)
+//        public static ulong? TryReadVarint(ref this  BufferReader<ReadOnlyBuffer> reader)
 //        {
-//            ulong Fast(ref ReadableBufferReader buffer)
+//            ulong Fast(ref  BufferReader<ReadOnlyBuffer> buffer)
 //            {
 //                var span = buffer.Span;
 //                ulong val = 0;
@@ -347,7 +347,7 @@
 //                }
 //                return ThrowOverflow();
 //            }
-//            ulong? Slow(ref ReadableBufferReader buffer)
+//            ulong? Slow(ref  BufferReader<ReadOnlyBuffer> buffer)
 //            {
 //                var x = buffer.Take();
 //                if (x < 0) return null;
@@ -380,7 +380,7 @@
 //            }
 //            return reader.HasSpan(10) ? Fast(ref reader) : Slow(ref reader);
 //        }
-//        private static (v2Result Status, long ConsumedBytes) DeserializeSync<T>(ISer2<T> serializer, ref ReadableBuffer buffer, ref T value)
+//        private static (v2Result Status, long ConsumedBytes) DeserializeSync<T>(ISer2<T> serializer, ref ReadOnlyBuffer buffer, ref T value)
 //        {
 //            var br = new ReadableBufferReader(buffer);
 //            var status = serializer.Deserialize(ref br, ref value);
@@ -388,7 +388,7 @@
 //            return (status, br.ConsumedBytes);
 
 //        }
-//        public static T Deserialize<T>(this ISer2<T> serializer, ref ReadableBuffer buffer, T value = default)
+//        public static T Deserialize<T>(this ISer2<T> serializer, ref ReadOnlyBuffer buffer, T value = default)
 //        {
 //            var reader = new ReadableBufferReader(buffer);
 //            var status = serializer.Deserialize(ref reader, ref value);
