@@ -112,7 +112,7 @@ namespace TheAwaitingGame
 
         const int REPEATS_PER_CUSTOMER = 250;
 
-        [Benchmark(OperationsPerInvoke = REPEATS_PER_CUSTOMER, Description = "single, ReadOnlyBuffer")]
+        [Benchmark(OperationsPerInvoke = REPEATS_PER_CUSTOMER, Description = "single, Stream", Baseline = true)]
         public void DeserializeSingleWithStream()
         {
             var stream = new MemoryStream(_customerBlob);
@@ -126,7 +126,7 @@ namespace TheAwaitingGame
         [Benchmark(OperationsPerInvoke = REPEATS_PER_CUSTOMER, Description = "single, ReadOnlyBuffer")]
         public void DeserializeSingleWithBuffer()
         {
-            var buffer = ReadableBuffer.Create(_customerBlob);
+            var buffer = new ReadOnlyBuffer(_customerBlob);
             for (int i = 0; i < REPEATS_PER_CUSTOMER; i++)
             {
                 GC.KeepAlive(AggressiveDeserializer.Instance.Deserialize<ProtoBuf.Customer>(buffer));
@@ -136,7 +136,7 @@ namespace TheAwaitingGame
 
         const int REPEATS_PER_MAGIC_WRAPPER = 5;
 
-        [Benchmark(OperationsPerInvoke = REPEATS_PER_MAGIC_WRAPPER, Description = "multi, Stream")]
+        [Benchmark(OperationsPerInvoke = REPEATS_PER_MAGIC_WRAPPER, Description = "multi, Stream" )]
         public void DeserializeMultiWithStream()
         {
             var stream = new MemoryStream(_magicWrapperBlob);
@@ -150,7 +150,7 @@ namespace TheAwaitingGame
         [Benchmark(OperationsPerInvoke = REPEATS_PER_MAGIC_WRAPPER, Description = "multi, ReadOnlyBuffer")]
         public void DeserializeMultiWithBuffer()
         {
-            var buffer = ReadableBuffer.Create(_magicWrapperBlob);
+            var buffer = new ReadOnlyBuffer(_magicWrapperBlob);
             for (int i = 0; i < REPEATS_PER_MAGIC_WRAPPER; i++)
             {
                 GC.KeepAlive(AggressiveDeserializer.Instance.Deserialize<ProtoBuf.CustomerMagicWrapper>(buffer));
