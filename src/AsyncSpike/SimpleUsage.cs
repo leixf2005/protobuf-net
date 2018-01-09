@@ -223,7 +223,7 @@ public class SimpleUsage : IDisposable
         for (int i = 0; i < 50; i++)
         {
             var buffer = writer.Alloc();
-            totalBytes += AggressiveDeserializer.Instance.SerializeWithLengthPrefix<ProtoBuf.Customer>(buffer, customer, 1);
+            totalBytes += AggressiveDeserializer.Instance.SerializeWithLengthPrefix(buffer, customer, 1);
             buffer.Commit();
         }
         writer.Complete();
@@ -269,7 +269,6 @@ public class SimpleUsage : IDisposable
         Serializer.Serialize(writeStream, customer);
         Console.WriteLine($"serialized to stream: {writeStream.Length}");
 
-        Console.Read();
 #if VERBOSE        
         // ExecuteBigArrayWork(customer, 1, Console.Out);
 #else

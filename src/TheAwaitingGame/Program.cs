@@ -32,6 +32,7 @@ namespace TheAwaitingGame
                 .With(StatisticColumn.OperationsPerSecond) // add ops/s
                 .With(Job.Default.With(gcMode));
 
+
 #if NET462
             // enable the Inlining Diagnoser to find out what does not get inlined
             // uncomment it first, it produces a lot of output
@@ -112,7 +113,7 @@ namespace TheAwaitingGame
 
         const int REPEATS_PER_CUSTOMER = 250;
 
-        [Benchmark(OperationsPerInvoke = REPEATS_PER_CUSTOMER, Description = "read single, Stream")]
+        //[Benchmark(OperationsPerInvoke = REPEATS_PER_CUSTOMER, Description = "read single, Stream")]
         [BenchmarkCategory("single read")]
         public void DeserializeSingleWithStream()
         {
@@ -124,7 +125,7 @@ namespace TheAwaitingGame
             }
         }
 
-        [Benchmark(OperationsPerInvoke = REPEATS_PER_CUSTOMER, Description = "read single, ReadOnlyBuffer")]
+        //[Benchmark(OperationsPerInvoke = REPEATS_PER_CUSTOMER, Description = "read single, ReadOnlyBuffer")]
         [BenchmarkCategory("single read")]
         public void DeserializeSingleWithBuffer()
         {
@@ -138,7 +139,7 @@ namespace TheAwaitingGame
 
         const int REPEATS_PER_MAGIC_WRAPPER = 5;
 
-        [Benchmark(OperationsPerInvoke = REPEATS_PER_MAGIC_WRAPPER, Description = "read multi, Stream" )]
+        //[Benchmark(OperationsPerInvoke = REPEATS_PER_MAGIC_WRAPPER, Description = "read multi, Stream" )]
         [BenchmarkCategory("multi read")]
         public void DeserializeMultiWithStream()
         {
@@ -150,7 +151,7 @@ namespace TheAwaitingGame
             }
         }
 
-        [Benchmark(OperationsPerInvoke = REPEATS_PER_MAGIC_WRAPPER, Description = "read multi, ReadOnlyBuffer")]
+        //[Benchmark(OperationsPerInvoke = REPEATS_PER_MAGIC_WRAPPER, Description = "read multi, ReadOnlyBuffer")]
         [BenchmarkCategory("multi read")]
         public void DeserializeMultiWithBuffer()
         {
@@ -162,7 +163,7 @@ namespace TheAwaitingGame
         }
 
         PipeOptions _options = new PipeOptions(new MemoryPool());
-        [Benchmark(Description = "write multi, Pipe, single alloc", OperationsPerInvoke = 50)]
+        // [Benchmark(Description = "write multi, Pipe, single alloc", OperationsPerInvoke = 50)]
         [BenchmarkCategory("multi write")]
         public long WriteWithPipeSingleAlloc()
         {
@@ -172,7 +173,7 @@ namespace TheAwaitingGame
             long totalBytes = 0;
             for (int i = 0; i < 50; i++)
             {
-                totalBytes += AggressiveDeserializer.Instance.SerializeWithLengthPrefix<ProtoBuf.Customer>(buffer, _customer, 1);
+                totalBytes += AggressiveDeserializer.Instance.SerializeWithLengthPrefix(buffer, _customer, 1);
             }
             buffer.Commit();
             writer.Complete();
@@ -181,7 +182,7 @@ namespace TheAwaitingGame
             return totalBytes;
         }
 
-        [Benchmark(Description = "read/write, Pipe, alloc per item", OperationsPerInvoke = 50)]
+        //[Benchmark(Description = "read/write, Pipe, alloc per item", OperationsPerInvoke = 50)]
         [BenchmarkCategory("multi write")]
         public async ValueTask<long> ReadWriteWithPipeMultiAlloc()
         {
@@ -191,7 +192,7 @@ namespace TheAwaitingGame
             for (int i = 0; i < 50; i++)
             {
                 var buffer = writer.Alloc();
-                totalBytes += AggressiveDeserializer.Instance.SerializeWithLengthPrefix<ProtoBuf.Customer>(buffer, _customer, 1);
+                totalBytes += AggressiveDeserializer.Instance.SerializeWithLengthPrefix(buffer, _customer, 1);
                 buffer.Commit();
             }
             writer.Complete();
@@ -212,7 +213,7 @@ namespace TheAwaitingGame
             for (int i = 0; i < 50; i++)
             {
                 var buffer = writer.Alloc();
-                totalBytes += AggressiveDeserializer.Instance.SerializeWithLengthPrefix<ProtoBuf.Customer>(buffer, _customer, 1);
+                totalBytes += AggressiveDeserializer.Instance.SerializeWithLengthPrefix(buffer, _customer, 1);
                 buffer.Commit();
             }            
             writer.Complete();
@@ -235,7 +236,7 @@ namespace TheAwaitingGame
             return ms.Length;
         }
 
-        [Benchmark(Description = "read/write, Stream", OperationsPerInvoke = 50)]
+        //[Benchmark(Description = "read/write, Stream", OperationsPerInvoke = 50)]
         [BenchmarkCategory("multi write")]
         public long ReadWriteWithStream()
         {
