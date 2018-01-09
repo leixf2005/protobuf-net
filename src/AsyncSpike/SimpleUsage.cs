@@ -19,176 +19,176 @@ public class SimpleUsage : IDisposable
     // private PipeOptions _options = new PipeOptions(new MemoryPool());
     void IDisposable.Dispose()
     {
-    //    _options?.Pool?.Dispose();
+        //    _options?.Pool?.Dispose();
     }
 
-//    static void SlicePerf(int LOOP, TextWriter log)
-//    {
-//        int Acc(ReadOnlySpan<byte> a) => a[0] ^ a[1]; // just something arbitrary
+    //    static void SlicePerf(int LOOP, TextWriter log)
+    //    {
+    //        int Acc(ReadOnlySpan<byte> a) => a[0] ^ a[1]; // just something arbitrary
 
-//        byte[] data = new byte[64 * 1024];
-//        new Random(123).NextBytes(data);
+    //        byte[] data = new byte[64 * 1024];
+    //        new Random(123).NextBytes(data);
 
-//        log?.WriteLine($"Comparing slice performance slicing {data.Length} bytes into {data.Length / 2} slices, {LOOP} times");
+    //        log?.WriteLine($"Comparing slice performance slicing {data.Length} bytes into {data.Length / 2} slices, {LOOP} times");
 
-//#if !RUNACC
-//        log?.WriteLine("The individual variant results only make sense if RUNACC is defined, which: is isn't -");
-//        log?.WriteLine("the interior code *didn't run at all*, so: just look at the overall timings in the categories");
-//#endif
-
-
+    //#if !RUNACC
+    //        log?.WriteLine("The individual variant results only make sense if RUNACC is defined, which: is isn't -");
+    //        log?.WriteLine("the interior code *didn't run at all*, so: just look at the overall timings in the categories");
+    //#endif
 
 
-//        ReadOnlyMemory<byte> memory;
-//        ReadOnlySpan<byte> span;
-//        ReadOnlyBuffer rob;
-//        Stopwatch watch;
-//        int acc = 0;
-
-//        log?.WriteLine("");
-//        log?.WriteLine("Span<byte>");
-//        watch = Stopwatch.StartNew();
-//        for (int i = 0; i < LOOP; i++)
-//        {
-//            acc = 0;
-//            span = data;
-//            while (!span.IsEmpty)
-//            {
-//#if RUNACC
-//                acc ^= Acc(span.Slice(0, 2));
-//#endif
-//                span = span.Slice(2);
-//            }
-//        }
-//        watch.Stop();
-//        log?.WriteLine($"\t=>Slice: acc={acc}, {watch.ElapsedMilliseconds}ms");
-
-//        log?.WriteLine("");
-//        log?.WriteLine("Memory<byte>");
-//        watch = Stopwatch.StartNew();
-//        for (int i = 0; i < LOOP; i++)
-//        {
-//            acc = 0;
-//            memory = data;
-//            while (!memory.IsEmpty)
-//            {
-//#if RUNACC
-//                acc ^= Acc(memory.Span.Slice(0, 2));
-//#endif
-//                memory = memory.Slice(2);
-//            }
-//        }
-//        watch.Stop();
-//        log?.WriteLine($"\t=>Span=>Slice: acc={acc}, {watch.ElapsedMilliseconds}ms");
-
-//        watch = Stopwatch.StartNew();
-//        for (int i = 0; i < LOOP; i++)
-//        {
-//            acc = 0;
-//            memory = data;
-//            while (!memory.IsEmpty)
-//            {
-//#if RUNACC
-//                acc ^= Acc(memory.Slice(0, 2).Span);
-//#endif
-//                memory = memory.Slice(2);
-//            }
-//        }
-//        watch.Stop();
-//        log?.WriteLine($"\t=>Slice=>Span: acc={acc}, {watch.ElapsedMilliseconds}ms");
-
-//        rob = new ReadableBuffer(data);
-//        log?.WriteLine("");
-//        log?.WriteLine($"ReadableBuffer, {nameof(rob.IsSingleSpan)}={rob.IsSingleSpan}");
-
-//        watch = Stopwatch.StartNew();
-//        for (int i = 0; i < LOOP; i++)
-//        {
-//            acc = 0;
-//            rob = new ReadableBuffer(data);
-//            while (!rob.IsEmpty)
-//            {
-//#if RUNACC
-//                acc ^= Acc(rob.Slice(0, 2).First.Span);
-//#endif
-//                rob = rob.Slice(2);
-//            }
-//        }
-//        watch.Stop();
-//        log?.WriteLine($"\t=>Slice=>First=>Span: acc={acc}, {watch.ElapsedMilliseconds}ms");
-
-//        watch = Stopwatch.StartNew();
-//        for (int i = 0; i < LOOP; i++)
-//        {
-//            acc = 0;
-//            rob = new ReadableBuffer(data);
-//            while (!rob.IsEmpty)
-//            {
-//#if RUNACC
-//                acc ^= Acc(rob.First.Slice(0, 2).Span);
-//#endif
-//                rob = rob.Slice(2);
-//            }
-//        }
-//        watch.Stop();
-//        log?.WriteLine($"\t=>First=>Slice=>Span: acc={acc}, {watch.ElapsedMilliseconds}ms");
-
-//        watch = Stopwatch.StartNew();
-//        for (int i = 0; i < LOOP; i++)
-//        {
-//            acc = 0;
-//            rob = new ReadableBuffer(data);
-//            while (!rob.IsEmpty)
-//            {
-//#if RUNACC
-//                acc ^= Acc(rob.First.Span.Slice(0, 2));
-//#endif
-//                rob = rob.Slice(2);
-//            }
-//        }
-//        watch.Stop();
-//        log?.WriteLine($"\t=>First=>Span=>Slice: acc={acc}, {watch.ElapsedMilliseconds}ms");
 
 
-//        rob = ReadableBuffer.Create(data);
-////        var drob = new DoubleBufferedReadableBuffer(rob);
-////        log?.WriteLine("");
-////        log?.WriteLine($"DoubleBufferedReadableBuffer, {nameof(drob.IsSingleSpan)}={drob.IsSingleSpan}");
+    //        ReadOnlyMemory<byte> memory;
+    //        ReadOnlySpan<byte> span;
+    //        ReadOnlyBuffer rob;
+    //        Stopwatch watch;
+    //        int acc = 0;
 
-////        watch = Stopwatch.StartNew();
-////        for (int i = 0; i < LOOP; i++)
-////        {
-////            acc = 0;
-////            drob = new DoubleBufferedReadableBuffer(rob);
-////            while (!drob.IsEmpty)
-////            {
-////#if RUNACC
-////                acc ^= Acc(drob.First.Slice(0, 2).Span);
-////#endif
-////                drob = drob.Slice(2);
-////            }
-////        }
-////        watch.Stop();
-////        log?.WriteLine($"\t=>First=>Slice=>Span: acc={acc}, {watch.ElapsedMilliseconds}ms");
+    //        log?.WriteLine("");
+    //        log?.WriteLine("Span<byte>");
+    //        watch = Stopwatch.StartNew();
+    //        for (int i = 0; i < LOOP; i++)
+    //        {
+    //            acc = 0;
+    //            span = data;
+    //            while (!span.IsEmpty)
+    //            {
+    //#if RUNACC
+    //                acc ^= Acc(span.Slice(0, 2));
+    //#endif
+    //                span = span.Slice(2);
+    //            }
+    //        }
+    //        watch.Stop();
+    //        log?.WriteLine($"\t=>Slice: acc={acc}, {watch.ElapsedMilliseconds}ms");
 
-////        watch = Stopwatch.StartNew();
-////        for (int i = 0; i < LOOP; i++)
-////        {
-////            acc = 0;
-////            drob = new DoubleBufferedReadableBuffer(rob);
-////            while (!drob.IsEmpty)
-////            {
-////#if RUNACC
-////                acc ^= Acc(drob.First.Span.Slice(0, 2));
-////#endif
-////                drob = drob.Slice(2);
-////            }
-////        }
-////        watch.Stop();
-////        log?.WriteLine($"\t=>First=>Span=>Slice: acc={acc}, {watch.ElapsedMilliseconds}ms");
+    //        log?.WriteLine("");
+    //        log?.WriteLine("Memory<byte>");
+    //        watch = Stopwatch.StartNew();
+    //        for (int i = 0; i < LOOP; i++)
+    //        {
+    //            acc = 0;
+    //            memory = data;
+    //            while (!memory.IsEmpty)
+    //            {
+    //#if RUNACC
+    //                acc ^= Acc(memory.Span.Slice(0, 2));
+    //#endif
+    //                memory = memory.Slice(2);
+    //            }
+    //        }
+    //        watch.Stop();
+    //        log?.WriteLine($"\t=>Span=>Slice: acc={acc}, {watch.ElapsedMilliseconds}ms");
+
+    //        watch = Stopwatch.StartNew();
+    //        for (int i = 0; i < LOOP; i++)
+    //        {
+    //            acc = 0;
+    //            memory = data;
+    //            while (!memory.IsEmpty)
+    //            {
+    //#if RUNACC
+    //                acc ^= Acc(memory.Slice(0, 2).Span);
+    //#endif
+    //                memory = memory.Slice(2);
+    //            }
+    //        }
+    //        watch.Stop();
+    //        log?.WriteLine($"\t=>Slice=>Span: acc={acc}, {watch.ElapsedMilliseconds}ms");
+
+    //        rob = new ReadableBuffer(data);
+    //        log?.WriteLine("");
+    //        log?.WriteLine($"ReadableBuffer, {nameof(rob.IsSingleSpan)}={rob.IsSingleSpan}");
+
+    //        watch = Stopwatch.StartNew();
+    //        for (int i = 0; i < LOOP; i++)
+    //        {
+    //            acc = 0;
+    //            rob = new ReadableBuffer(data);
+    //            while (!rob.IsEmpty)
+    //            {
+    //#if RUNACC
+    //                acc ^= Acc(rob.Slice(0, 2).First.Span);
+    //#endif
+    //                rob = rob.Slice(2);
+    //            }
+    //        }
+    //        watch.Stop();
+    //        log?.WriteLine($"\t=>Slice=>First=>Span: acc={acc}, {watch.ElapsedMilliseconds}ms");
+
+    //        watch = Stopwatch.StartNew();
+    //        for (int i = 0; i < LOOP; i++)
+    //        {
+    //            acc = 0;
+    //            rob = new ReadableBuffer(data);
+    //            while (!rob.IsEmpty)
+    //            {
+    //#if RUNACC
+    //                acc ^= Acc(rob.First.Slice(0, 2).Span);
+    //#endif
+    //                rob = rob.Slice(2);
+    //            }
+    //        }
+    //        watch.Stop();
+    //        log?.WriteLine($"\t=>First=>Slice=>Span: acc={acc}, {watch.ElapsedMilliseconds}ms");
+
+    //        watch = Stopwatch.StartNew();
+    //        for (int i = 0; i < LOOP; i++)
+    //        {
+    //            acc = 0;
+    //            rob = new ReadableBuffer(data);
+    //            while (!rob.IsEmpty)
+    //            {
+    //#if RUNACC
+    //                acc ^= Acc(rob.First.Span.Slice(0, 2));
+    //#endif
+    //                rob = rob.Slice(2);
+    //            }
+    //        }
+    //        watch.Stop();
+    //        log?.WriteLine($"\t=>First=>Span=>Slice: acc={acc}, {watch.ElapsedMilliseconds}ms");
 
 
-//    }
+    //        rob = ReadableBuffer.Create(data);
+    ////        var drob = new DoubleBufferedReadableBuffer(rob);
+    ////        log?.WriteLine("");
+    ////        log?.WriteLine($"DoubleBufferedReadableBuffer, {nameof(drob.IsSingleSpan)}={drob.IsSingleSpan}");
+
+    ////        watch = Stopwatch.StartNew();
+    ////        for (int i = 0; i < LOOP; i++)
+    ////        {
+    ////            acc = 0;
+    ////            drob = new DoubleBufferedReadableBuffer(rob);
+    ////            while (!drob.IsEmpty)
+    ////            {
+    ////#if RUNACC
+    ////                acc ^= Acc(drob.First.Slice(0, 2).Span);
+    ////#endif
+    ////                drob = drob.Slice(2);
+    ////            }
+    ////        }
+    ////        watch.Stop();
+    ////        log?.WriteLine($"\t=>First=>Slice=>Span: acc={acc}, {watch.ElapsedMilliseconds}ms");
+
+    ////        watch = Stopwatch.StartNew();
+    ////        for (int i = 0; i < LOOP; i++)
+    ////        {
+    ////            acc = 0;
+    ////            drob = new DoubleBufferedReadableBuffer(rob);
+    ////            while (!drob.IsEmpty)
+    ////            {
+    ////#if RUNACC
+    ////                acc ^= Acc(drob.First.Span.Slice(0, 2));
+    ////#endif
+    ////                drob = drob.Slice(2);
+    ////            }
+    ////        }
+    ////        watch.Stop();
+    ////        log?.WriteLine($"\t=>First=>Span=>Slice: acc={acc}, {watch.ElapsedMilliseconds}ms");
+
+
+    //    }
     static async Task<int> Main()
     {
         try
@@ -214,13 +214,48 @@ public class SimpleUsage : IDisposable
         }
         finally { }
     }
+
+    public static async ValueTask<long> ReadWriteWithPipeMultiAlloc(ProtoBuf.Customer customer)
+    {
+        var pipe = new Pipe(_options);
+        var writer = pipe.Writer;
+        long totalBytes = 0;
+        for (int i = 0; i < 50; i++)
+        {
+            var buffer = writer.Alloc();
+            totalBytes += AggressiveDeserializer.Instance.SerializeWithLengthPrefix<ProtoBuf.Customer>(buffer, customer, 1);
+            buffer.Commit();
+        }
+        writer.Complete();
+
+        var ms2 = new MemoryStream();
+        for (int i = 0; i < 50; i++)
+        {
+            Serializer.SerializeWithLengthPrefix(ms2, customer, PrefixStyle.Base128, 1);
+        }
+
+        var ms = new MemoryStream();
+        await pipe.Reader.CopyToEndAsync(ms);
+        long len2 = ms.Length;
+        long len3 = ms2.Length;
+
+        var bPipe = BitConverter.ToString(ms.GetBuffer(), 0, (int)ms.Length);
+        var sPipe = BitConverter.ToString(ms2.GetBuffer(), 0, (int)ms2.Length);
+
+        bool eq = bPipe == sPipe;
+        Debug.Assert(eq);
+        await AggressiveDeserializer.Instance.DeserializeAsync<ProtoBuf.CustomerMagicWrapper>(pipe.Reader);
+        pipe.Reader.Complete();
+        pipe.Reset();
+        return totalBytes;
+    }
     static async Task ExecuteV2()
     {
         Console.WriteLine($"Preparing data, warming up (JIT), and validating output (see [checksum])");
         var rand = new Random(1234);
         var customer = InventCustomer(rand);
 
-
+        await ReadWriteWithPipeMultiAlloc(customer);
 
         // try writing
         var pipe = new Pipe(_options);
@@ -461,9 +496,9 @@ public class SimpleUsage : IDisposable
                 Stopwatch watch;
                 CustomerMagicWrapper magic = default;
 
-                
+
                 Collect();
-                
+
                 watch = Stopwatch.StartNew();
                 for (int j = 0; j < REPEATS_PER_TIMING; j++)
                 {
@@ -473,9 +508,9 @@ public class SimpleUsage : IDisposable
                 watch.Stop();
                 output?.WriteLine($"Deserialized with protobuf-net; {watch.ElapsedMilliseconds}ms, chk: {magic}");
 
-                
+
                 Collect();
-                
+
                 //var obj = new CustomerMagicWrapper();
                 //try
                 //{
@@ -548,10 +583,10 @@ public class SimpleUsage : IDisposable
                     //var obj = new CustomerMagicWrapper();
                     //try
                     //{
-                        watch = Stopwatch.StartNew();
-                        var pair = await AggressiveDeserializer.Instance.DeserializeAsync<CustomerMagicWrapper>(pipe.Input); //, obj);
-                        watch.Stop();
-                        output?.WriteLine($"Deserialized with pipelines; {watch.ElapsedMilliseconds}ms, chk: {pair.Value}; used {pair.AwaitCount} awaits");
+                    watch = Stopwatch.StartNew();
+                    var pair = await AggressiveDeserializer.Instance.DeserializeAsync<CustomerMagicWrapper>(pipe.Input); //, obj);
+                    watch.Stop();
+                    output?.WriteLine($"Deserialized with pipelines; {watch.ElapsedMilliseconds}ms, chk: {pair.Value}; used {pair.AwaitCount} awaits");
                     //}
                     //catch (Exception ex)
                     //{
@@ -566,9 +601,9 @@ public class SimpleUsage : IDisposable
     private static void CrawlCustomerWrapper(ProtoReader reader, TextWriter output)
     {
         int field;
-        while((field = reader.ReadFieldHeader()) > 0)
+        while ((field = reader.ReadFieldHeader()) > 0)
         {
-            switch(field)
+            switch (field)
             {
                 case 1:
                     output.WriteLine($"[{reader.Position}] Customer");

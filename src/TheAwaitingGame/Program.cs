@@ -112,7 +112,7 @@ namespace TheAwaitingGame
 
         const int REPEATS_PER_CUSTOMER = 250;
 
-        // [Benchmark(OperationsPerInvoke = REPEATS_PER_CUSTOMER, Description = "read single, Stream")]
+        [Benchmark(OperationsPerInvoke = REPEATS_PER_CUSTOMER, Description = "read single, Stream")]
         [BenchmarkCategory("single read")]
         public void DeserializeSingleWithStream()
         {
@@ -124,7 +124,7 @@ namespace TheAwaitingGame
             }
         }
 
-        // [Benchmark(OperationsPerInvoke = REPEATS_PER_CUSTOMER, Description = "read single, ReadOnlyBuffer")]
+        [Benchmark(OperationsPerInvoke = REPEATS_PER_CUSTOMER, Description = "read single, ReadOnlyBuffer")]
         [BenchmarkCategory("single read")]
         public void DeserializeSingleWithBuffer()
         {
@@ -138,7 +138,7 @@ namespace TheAwaitingGame
 
         const int REPEATS_PER_MAGIC_WRAPPER = 5;
 
-        // [Benchmark(OperationsPerInvoke = REPEATS_PER_MAGIC_WRAPPER, Description = "read multi, Stream" )]
+        [Benchmark(OperationsPerInvoke = REPEATS_PER_MAGIC_WRAPPER, Description = "read multi, Stream" )]
         [BenchmarkCategory("multi read")]
         public void DeserializeMultiWithStream()
         {
@@ -150,7 +150,7 @@ namespace TheAwaitingGame
             }
         }
 
-        // [Benchmark(OperationsPerInvoke = REPEATS_PER_MAGIC_WRAPPER, Description = "read multi, ReadOnlyBuffer")]
+        [Benchmark(OperationsPerInvoke = REPEATS_PER_MAGIC_WRAPPER, Description = "read multi, ReadOnlyBuffer")]
         [BenchmarkCategory("multi read")]
         public void DeserializeMultiWithBuffer()
         {
@@ -164,7 +164,7 @@ namespace TheAwaitingGame
         PipeOptions _options = new PipeOptions(new MemoryPool());
         [Benchmark(Description = "write multi, Pipe, single alloc", OperationsPerInvoke = 50)]
         [BenchmarkCategory("multi write")]
-        public long ReadWriteWithPipeSingleAlloc()
+        public long WriteWithPipeSingleAlloc()
         {
             var pipe = new Pipe(_options);
             var writer = pipe.Writer;
@@ -181,9 +181,30 @@ namespace TheAwaitingGame
             return totalBytes;
         }
 
+        [Benchmark(Description = "read/write, Pipe, alloc per item", OperationsPerInvoke = 50)]
+        [BenchmarkCategory("multi write")]
+        public async ValueTask<long> ReadWriteWithPipeMultiAlloc()
+        {
+            var pipe = new Pipe(_options);
+            var writer = pipe.Writer;
+            long totalBytes = 0;
+            for (int i = 0; i < 50; i++)
+            {
+                var buffer = writer.Alloc();
+                totalBytes += AggressiveDeserializer.Instance.SerializeWithLengthPrefix<ProtoBuf.Customer>(buffer, _customer, 1);
+                buffer.Commit();
+            }
+            writer.Complete();
+
+            await AggressiveDeserializer.Instance.DeserializeAsync<ProtoBuf.CustomerMagicWrapper>(pipe.Reader);
+            pipe.Reader.Complete();
+            pipe.Reset();
+            return totalBytes;
+        }
+
         [Benchmark(Description = "write multi, Pipe, alloc per item", OperationsPerInvoke = 50)]
         [BenchmarkCategory("multi write")]
-        public long ReadWriteWithPipeMultiAlloc()
+        public long WriteWithPipeMultiAlloc()
         {
             var pipe = new Pipe(_options);
             var writer = pipe.Writer;            
@@ -204,6 +225,18 @@ namespace TheAwaitingGame
 
         [Benchmark(Description = "write multi, Stream", OperationsPerInvoke = 50)]
         [BenchmarkCategory("multi write")]
+        public long WriteWithStream()
+        {
+            var ms = new MemoryStream();
+            for (int i = 0; i < 50; i++)
+            {
+                ProtoBuf.Serializer.SerializeWithLengthPrefix<ProtoBuf.Customer>(ms, _customer, ProtoBuf.PrefixStyle.Base128, 1);
+            }
+            return ms.Length;
+        }
+
+        [Benchmark(Description = "read/write, Stream", OperationsPerInvoke = 50)]
+        [BenchmarkCategory("multi write")]
         public long ReadWriteWithStream()
         {
             var ms = new MemoryStream();
@@ -211,6 +244,8 @@ namespace TheAwaitingGame
             {
                 ProtoBuf.Serializer.SerializeWithLengthPrefix<ProtoBuf.Customer>(ms, _customer, ProtoBuf.PrefixStyle.Base128, 1);
             }
+            ms.Position = 0;
+            ProtoBuf.Serializer.Deserialize<ProtoBuf.CustomerMagicWrapper>(ms);
             return ms.Length;
         }
 

@@ -36,7 +36,7 @@ namespace AggressiveNamespace // just to calm down some warnings
         {
             var ctx = SimpleCache<DeserializationContext>.Get();
 
-            var result = ctx.SerializeSubItem(buffer, serializer, value, fieldNumber);
+            var result = ctx.SerializeSubItem(buffer, serializer, value, fieldNumber, WireType.String);
             SimpleCache<DeserializationContext>.Recycle(ctx);
             return result;
         }
@@ -61,18 +61,30 @@ namespace AggressiveNamespace // just to calm down some warnings
 
         public static int WriteVarint(ref this OutputWriter<WritableBuffer> writer, ulong value)
         {
-            writer.Ensure(10);
-            var span = writer.Span;
-            int len = 1;
-            span[0] = (byte)((uint)value & 127U);
-            value >>= 7;
-            while (value != 0)
+            int Fast(ref OutputWriter<WritableBuffer> w, byte v)
             {
-                span[len++] = (byte)((uint)value & 127U);
-                value >>= 7;
+                w.Ensure(1);
+                w.Span[0] = v;
+                w.Advance(1);
+                return 1;
             }
-            writer.Advance(len);
-            return len;
+            int Slow(ref OutputWriter<WritableBuffer> w, ulong v)
+            {
+                w.Ensure(10);
+                var span = w.Span;
+                int len = 1;
+                span[0] = (byte)(((uint)v & 127U) | 128);
+                v >>= 7;
+                while (v != 0)
+                {
+                    span[len++] = (byte)(((uint)v & 127U) | 128);
+                    v >>= 7;
+                }
+                span[len - 1] &= 127;
+                w.Advance(len);
+                return len;
+            }
+            return value < 128 ? Fast(ref writer, (byte)value) : Slow(ref writer, value);
         }
 
         public static unsafe int WriteString(ref this OutputWriter<WritableBuffer> writer, string value)
@@ -157,24 +169,35 @@ namespace AggressiveNamespace // just to calm down some warnings
 
                 return Slow(ref writer, value, charCount, byteCount);
             }
-            
+
         }
 
-
-        public static int WriteVarint(in this WritableBuffer buffer, ulong value)
+        public static int WriteVarint(in this WritableBuffer writer, ulong value)
         {
-            buffer.Ensure(10);
-            var span = buffer.Buffer.Span;
-            int len = 1;
-            span[0] = (byte)((uint)value & 127U);
-            value >>= 7;
-            while (value != 0)
+            int Fast(in WritableBuffer w, byte v)
             {
-                span[len++] = (byte)((uint)value & 127U);
-                value >>= 7;
+                w.Ensure(1);
+                w.Buffer.Span[0] = v;
+                w.Advance(1);
+                return 1;
             }
-            buffer.Advance(len);
-            return len;
+            int Slow(in WritableBuffer w, ulong v)
+            {
+                w.Ensure(10);
+                var span = w.Buffer.Span;
+                int len = 1;
+                span[0] = (byte)(((uint)v & 127U) | 128);
+                v >>= 7;
+                while (v != 0)
+                {
+                    span[len++] = (byte)(((uint)v & 127U) | 128);
+                    v >>= 7;
+                }
+                span[len - 1] &= 127;
+                w.Advance(len);
+                return len;
+            }
+            return value < 128 ? Fast(writer, (byte)value) : Slow(writer, value);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
