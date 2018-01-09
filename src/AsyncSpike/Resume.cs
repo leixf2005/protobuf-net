@@ -7,6 +7,7 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Pipelines;
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Threading;
 
 namespace AggressiveNamespace
@@ -245,9 +246,167 @@ namespace AggressiveNamespace
         }
         int _pushLock;
         public int AwaitCount { get; private set; }
+        public bool LengthOnly => _lengthOnlyCount != 0;
         internal void IncrementAwaitCount() => AwaitCount++;
 
+        static ulong FieldHeader(int fieldNumber, WireType wireType)
+            => (((ulong)fieldNumber) << 3) | (uint)wireType;
 
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        static int VarintLength(uint value)
+        {
+            int len = 1;
+            while ((value & ~127U) != 0)
+            {
+                value >>= 7;
+                len++;
+            }
+            return len;
+        }
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        static int VarintLength(ulong value)
+        {
+            int len = 1;
+            while ((value & ~127UL) != 0)
+            {
+                value >>= 7;
+                len++;
+            }
+            return len;
+        }
+
+        internal long SerializeSubItem<T>(in WritableBuffer buffer, IResumableDeserializer<T> serializer,
+            in T value, int fieldNumber, WireType wireType = WireType.String)
+        {
+            if (value == null) return 0;
+
+            if (wireType != WireType.String) throw new NotImplementedException($"Not yet done: {wireType}");
+
+            _lengthOnlyCount++;
+            var expectedLength = serializer.Serialize(default, value, this);
+
+            var fieldHeader = FieldHeader(fieldNumber, wireType);
+            if (--_lengthOnlyCount == 0)
+            {
+                long headerLength = buffer.WriteVarint(fieldHeader);
+                headerLength += buffer.WriteVarint((ulong)expectedLength);
+
+                long actualLength = serializer.Serialize(buffer, value, this);
+                if (actualLength != expectedLength)
+                    throw new InvalidOperationException($"Length was incorrect; calculated {expectedLength}, was {actualLength}");
+                return headerLength + actualLength;
+            }
+            else
+            {
+                return VarintLength(fieldHeader) + VarintLength((ulong)expectedLength) + expectedLength;
+            }
+        }
+
+        int _lengthOnlyCount;
+
+        internal int WriteInt32(ref OutputWriter<WritableBuffer> writer, int fieldNumber, WireType wireType, int value, int defaultValue)
+        {
+            if (value == defaultValue) return 0;
+
+            int headerLen;
+            if (LengthOnly)
+            {
+                headerLen = VarintLength(FieldHeader(fieldNumber, wireType));
+                switch (wireType)
+                {
+                    case WireType.Fixed32: return headerLen + 4;
+                    case WireType.Fixed64: return headerLen + 8;
+                    case WireType.Varint: return headerLen + VarintLength((ulong)(long)value);
+                }
+            }
+            else
+            {
+                headerLen = writer.WriteVarint(FieldHeader(fieldNumber, wireType));
+                switch (wireType)
+                {
+                    case WireType.Fixed32: return headerLen + WriteRawUInt32(ref writer, (uint)value);
+                    case WireType.Fixed64: return headerLen + WriteRawUInt64(ref writer, (ulong)(long)value);
+                    case WireType.Varint: return headerLen + writer.WriteVarint((ulong)(long)value);
+                }
+            }
+            return ThrowInvalidWireType(wireType);
+        }
+        static int WriteRawUInt32(ref OutputWriter<WritableBuffer> writer, uint value)
+        {
+            writer.Ensure(4);
+            var span = writer.Span;
+            span[0] = (byte)(value & 0xFF);
+            span[1] = (byte)((value >> 8) & 0xFF);
+            span[2] = (byte)((value >> 16) & 0xFF);
+            span[3] = (byte)((value >> 24) & 0xFF);
+            writer.Advance(4);
+            return 4;
+        }
+        static int WriteRawUInt64(ref OutputWriter<WritableBuffer> writer, ulong value)
+        {
+            writer.Ensure(8);
+            var span = writer.Span;
+
+            uint tmp = (uint)value;
+            span[0] = (byte)(tmp & 0xFF);
+            span[1] = (byte)((tmp >> 8) & 0xFF);
+            span[2] = (byte)((tmp >> 16) & 0xFF);
+            span[3] = (byte)((tmp >> 24) & 0xFF);
+
+            tmp = (uint)(value >> 32);
+            span[4] = (byte)(tmp & 0xFF);
+            span[5] = (byte)((tmp >> 8) & 0xFF);
+            span[6] = (byte)((tmp >> 16) & 0xFF);
+            span[7] = (byte)((tmp >> 24) & 0xFF);
+            writer.Advance(8);
+            return 8;
+        }
+        private static int ThrowInvalidWireType(WireType wireType) => throw new InvalidOperationException($"Invalid wire type: {wireType}");
+
+        static readonly Encoding Encoding = Encoding.UTF8;
+        internal long WriteString(ref OutputWriter<WritableBuffer> writer, int fieldNumber, WireType wireType, string value, string defaultValue)
+        {
+            if (value == null || value == defaultValue) return 0;
+            if (wireType != WireType.String) return ThrowInvalidWireType(wireType);
+
+            if (LengthOnly)
+            {
+                int bytes = Encoding.GetByteCount(value);
+                return VarintLength(FieldHeader(fieldNumber, wireType))
+                    + VarintLength((uint)bytes) + bytes;
+            }
+            else
+            {
+                return writer.WriteVarint(FieldHeader(fieldNumber, wireType)) + writer.WriteString(value);
+            }
+        }
+
+        internal int WriteDouble(ref OutputWriter<WritableBuffer> writer, int fieldNumber, WireType wireType, double value, double defaultValue)
+        {
+            if (value == defaultValue) return 0;
+
+            int headerLen;
+            if (LengthOnly)
+            {
+                headerLen = VarintLength(FieldHeader(fieldNumber, wireType));
+                switch (wireType)
+                {
+                    case WireType.Fixed32: return headerLen + 4;
+                    case WireType.Fixed64: return headerLen + 8;
+                }
+            }
+            else
+            {
+                headerLen = writer.WriteVarint(FieldHeader(fieldNumber, wireType));
+                switch (wireType)
+                {
+                    case WireType.Fixed32: return headerLen + WriteRawUInt32(ref writer, (uint)BitConverter.SingleToInt32Bits((float)value));
+                    case WireType.Fixed64: return headerLen + WriteRawUInt64(ref writer, (ulong)BitConverter.DoubleToInt64Bits(value));
+                }
+            }
+            return ThrowInvalidWireType(wireType);
+        }
     }
     public interface IProtoSerializer<T>
         : IResumableDeserializer<T>
@@ -257,7 +416,7 @@ namespace AggressiveNamespace
     public interface IResumableDeserializer<T>
     {
         void Deserialize(in ReadOnlyBuffer buffer, ref T value, DeserializationContext ctx);
-        long Serialize(in WritableBuffer buffer, ref T value, DeserializationContext ctx);
+        long Serialize(in WritableBuffer buffer, in T value, DeserializationContext ctx);
     }
     abstract class ResumeFrame
     {

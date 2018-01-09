@@ -220,6 +220,21 @@ public class SimpleUsage : IDisposable
         var rand = new Random(1234);
         var customer = InventCustomer(rand);
 
+
+
+        // try writing
+        var pipe = new Pipe(_options);
+        var writeMe = pipe.Writer.Alloc();
+        long bytesWritten = AggressiveDeserializer.Instance.Serialize(writeMe, customer);
+        writeMe.Commit();
+        pipe.Writer.Complete();
+        Console.WriteLine($"serialized to pipe: {bytesWritten}");
+
+        var writeStream = new MemoryStream();
+        Serializer.Serialize(writeStream, customer);
+        Console.WriteLine($"serialized to stream: {writeStream.Length}");
+
+        Console.Read();
 #if VERBOSE        
         // ExecuteBigArrayWork(customer, 1, Console.Out);
 #else

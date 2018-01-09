@@ -22,14 +22,31 @@ namespace AggressiveNamespace // just to calm down some warnings
     }
     public static class AggressiveDeserializerExtensions
     {
-        public static T Deserialize<T>(this IResumableDeserializer<T> serializer, ReadOnlyBuffer buffer, T value = default)
+        public static T Deserialize<T>(this IResumableDeserializer<T> serializer, in ReadOnlyBuffer buffer, T value = default)
         {
             var ctx = SimpleCache<DeserializationContext>.Get();
-            
+
             ctx.SetOrigin(0, buffer);
             serializer.Deserialize(buffer, ref value, ctx);
             SimpleCache<DeserializationContext>.Recycle(ctx);
             return value;
+        }
+
+        public static long SerializeWithLengthPrefix<T>(this IResumableDeserializer<T> serializer, in WritableBuffer buffer, in T value, int fieldNumber = 1)
+        {
+            var ctx = SimpleCache<DeserializationContext>.Get();
+
+            var result = ctx.SerializeSubItem(buffer, serializer, value, fieldNumber);
+            SimpleCache<DeserializationContext>.Recycle(ctx);
+            return result;
+        }
+        public static long Serialize<T>(this IResumableDeserializer<T> serializer, in WritableBuffer buffer, in T value)
+        {
+            var ctx = SimpleCache<DeserializationContext>.Get();
+
+            var result = serializer.Serialize(buffer, value, ctx);
+            SimpleCache<DeserializationContext>.Recycle(ctx);
+            return result;
         }
         static uint ThrowOverflow() => throw new OverflowException();
         static uint ThrowEOF(long moreBytesNeeded, string message)
@@ -41,6 +58,148 @@ namespace AggressiveNamespace // just to calm down some warnings
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static bool HasSpan(ref this BufferReader<ReadOnlyBuffer> reader, int bytes)
                 => reader.Span.Length >= reader.Index + bytes;
+
+        public static int WriteVarint(ref this OutputWriter<WritableBuffer> writer, ulong value)
+        {
+            writer.Ensure(10);
+            var span = writer.Span;
+            int len = 1;
+            span[0] = (byte)((uint)value & 127U);
+            value >>= 7;
+            while (value != 0)
+            {
+                span[len++] = (byte)((uint)value & 127U);
+                value >>= 7;
+            }
+            writer.Advance(len);
+            return len;
+        }
+
+        public static unsafe int WriteString(ref this OutputWriter<WritableBuffer> writer, string value)
+        {
+
+            int Fast(ref OutputWriter<WritableBuffer> w, string v, int c, int estimate)
+            {
+                w.Ensure(estimate + 1);
+                var span = w.Span;
+                fixed (char* chars = value)
+                fixed (byte* bytes = &MemoryMarshal.GetReference(span))
+                {
+                    estimate = Encoding.GetBytes(chars, c, bytes + 1, span.Length - 1);
+
+                }
+                Debug.Assert(estimate <= 127, "we expected a string to fit in a single-length prefix, and it didn't, oops!");
+                span[0] = (byte)estimate;
+
+                w.Advance(++estimate);
+                return estimate;
+            }
+            int Slow(ref OutputWriter<WritableBuffer> w, string v, int c, int knownSize)
+            {
+                int totalWritten = WriteVarint(ref w, (uint)knownSize);
+
+                w.Ensure(4);
+                var span = w.Span;
+                fixed (char* chars = value)
+                {
+                    if (span.Length >= knownSize) // looks like it should fit in the primary span, yay!
+                    {
+                        int bytesWritten;
+                        fixed (byte* bytes = &MemoryMarshal.GetReference(span))
+                        {
+                            bytesWritten = Encoding.GetBytes(chars, c, bytes, span.Length);
+
+                        }
+                        Debug.Assert(bytesWritten == knownSize, "we had the wrong numer of bytes encoding a string, oops!");
+                        totalWritten += bytesWritten;
+                        w.Advance(bytesWritten);
+                    }
+                    else
+                    {
+                        var encoder = GetEncoder();
+                        int charsWritten = 0;
+                        bool complete = false;
+                        while (c > 0 || !complete)
+                        {
+                            int bytesWritten, charsRead;
+                            fixed (byte* bytes = &MemoryMarshal.GetReference(span))
+                            {
+                                encoder.Convert(chars + charsWritten, c, bytes, span.Length, false, out charsRead, out bytesWritten, out complete);
+                            }
+                            charsWritten += charsRead;
+                            c -= charsRead;
+                            knownSize -= bytesWritten;
+                            w.Advance(bytesWritten);
+                            totalWritten += bytesWritten;
+
+                            if (knownSize > 0)
+                            {
+                                // we're going to need more space
+                                w.Ensure(4);
+                                span = w.Span;
+                            }
+                        }
+                        Debug.Assert(knownSize == 0, "we had the wrong numer of bytes encoding a string, oops!");
+                        Debug.Assert(c == 0, "we had chars left over encoding a string, oops!");
+                    }
+                }
+                return totalWritten;
+            }
+            {
+                int charCount = value.Length, byteCount;
+                if (charCount == 0) return WriteVarint(ref writer, 0);
+
+                // max bytes per char in utf-16 to utf-8 is 4; 4 * 32 = 128, we can fit 127 - so: 31
+                if (charCount < 32) return Fast(ref writer, value, charCount, charCount << 2);
+
+                byteCount = Encoding.GetByteCount(value);
+                if (byteCount < 128) return Fast(ref writer, value, charCount, byteCount);
+
+                return Slow(ref writer, value, charCount, byteCount);
+            }
+            
+        }
+
+
+        public static int WriteVarint(in this WritableBuffer buffer, ulong value)
+        {
+            buffer.Ensure(10);
+            var span = buffer.Buffer.Span;
+            int len = 1;
+            span[0] = (byte)((uint)value & 127U);
+            value >>= 7;
+            while (value != 0)
+            {
+                span[len++] = (byte)((uint)value & 127U);
+                value >>= 7;
+            }
+            buffer.Advance(len);
+            return len;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        static int VarintLength(uint value)
+        {
+            int len = 1;
+            while ((value & ~127U) != 0)
+            {
+                value >>= 7;
+                len++;
+            }
+            return len;
+        }
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        static int VarintLength(ulong value)
+        {
+            int len = 1;
+            while ((value & ~127UL) != 0)
+            {
+                value >>= 7;
+                len++;
+            }
+            return len;
+        }
+
 
         public static ulong ReadVarint(ref this BufferReader<ReadOnlyBuffer> reader)
         {
@@ -207,7 +366,21 @@ namespace AggressiveNamespace // just to calm down some warnings
         static readonly Encoding Encoding = Encoding.UTF8;
         [ThreadStatic]
         static Decoder _decoder;
-        static Decoder Decoder => _decoder ?? (_decoder = Encoding.GetDecoder());
+        [ThreadStatic]
+        static Encoder _encoder;
+
+        static Decoder GetDecoder()
+        {
+            var val = _decoder ?? (_decoder = Encoding.GetDecoder());
+            val.Reset();
+            return val;
+        }
+        static Encoder GetEncoder()
+        {
+            var val = _encoder ?? (_encoder = Encoding.GetEncoder());
+            val.Reset();
+            return val;
+        }
         public static string ReadString(ref this BufferReader<ReadOnlyBuffer> reader, WireType wireType)
         {
             unsafe string Fast(ref BufferReader<ReadOnlyBuffer> buffer, int bytes)
@@ -226,8 +399,7 @@ namespace AggressiveNamespace // just to calm down some warnings
 
             unsafe string SlowStackAlloc(ref BufferReader<ReadOnlyBuffer> buffer, int bytes)
             {
-                var decoder = Decoder;
-                decoder.Reset();
+                var decoder = GetDecoder();
                 int bytesLeft = bytes, charCount = 0;
 
                 var c = stackalloc char[bytes]; // good enough for now
@@ -325,20 +497,70 @@ namespace AggressiveNamespace // just to calm down some warnings
         public static AggressiveDeserializer Instance { get; } = new AggressiveDeserializer();
         private AggressiveDeserializer() { }
 
-        long IResumableDeserializer<ProtoBuf.Order>.Serialize(in WritableBuffer buffer, ref ProtoBuf.Order value, DeserializationContext ctx)
+        long IResumableDeserializer<ProtoBuf.Order>.Serialize(in WritableBuffer buffer, in ProtoBuf.Order value, DeserializationContext ctx)
         {
-            throw new NotImplementedException();
+            bool lengthOnly = ctx.LengthOnly;
+            Verbose.WriteLine($"{(lengthOnly ? "sizing" : "writing")} Order");
+
+            var writer = lengthOnly ? default : OutputWriter.Create(buffer);
+            long totalBytes = 0;
+
+            totalBytes += ctx.WriteInt32(ref writer, 1, WireType.Varint, value.Id, 0);
+            totalBytes += ctx.WriteString(ref writer, 2, WireType.String, value.ProductCode, "");
+            totalBytes += ctx.WriteInt32(ref writer, 3, WireType.Varint, value.Quantity, 0);
+            totalBytes += ctx.WriteDouble(ref writer, 4, WireType.Fixed64, value.UnitPrice, 0.0);
+            totalBytes += ctx.WriteString(ref writer, 5, WireType.String, value.Notes, "");
+
+            Verbose.WriteLine($"{(lengthOnly ? "sized" : "write")} Order: {totalBytes} bytes");
+            return totalBytes;
         }
-        long IResumableDeserializer<ProtoBuf.Customer>.Serialize(in WritableBuffer buffer, ref ProtoBuf.Customer customer, DeserializationContext ctx)
+        long IResumableDeserializer<ProtoBuf.Customer>.Serialize(in WritableBuffer buffer, in ProtoBuf.Customer value, DeserializationContext ctx)
         {
-            throw new NotImplementedException();
+            bool lengthOnly = ctx.LengthOnly;
+            Verbose.WriteLine($"{(lengthOnly ? "sizing" : "writing")} Customer");
+
+            var writer = lengthOnly ? default : OutputWriter.Create(buffer);
+            long totalBytes = 0;
+
+            totalBytes += ctx.WriteInt32(ref writer, 1, WireType.Varint, value.Id, 0);
+            totalBytes += ctx.WriteString(ref writer, 2, WireType.String, value.Name, "");
+            totalBytes += ctx.WriteString(ref writer, 3, WireType.String, value.Notes, "");
+            totalBytes += ctx.WriteDouble(ref writer, 4, WireType.Fixed64, value.MarketValue, 0.0);
+
+            var _5 = value.Orders;
+            if (_5 != null)
+            {
+                foreach (var item in _5)
+                {
+                    totalBytes += ctx.SerializeSubItem(buffer, Instance, in item, 5, WireType.String);
+                }
+            }
+
+            Verbose.WriteLine($"{(lengthOnly ? "sized" : "write")} Customer: {totalBytes} bytes");
+            return totalBytes;
         }
-        long IResumableDeserializer<ProtoBuf.CustomerMagicWrapper>.Serialize(in WritableBuffer buffer, ref ProtoBuf.CustomerMagicWrapper value, DeserializationContext ctx)
+        long IResumableDeserializer<ProtoBuf.CustomerMagicWrapper>.Serialize(in WritableBuffer buffer, in ProtoBuf.CustomerMagicWrapper value, DeserializationContext ctx)
         {
-            throw new NotImplementedException();
+            bool lengthOnly = ctx.LengthOnly;
+            Verbose.WriteLine($"{(lengthOnly ? "sizing" : "writing")} CustomerMagicWrapper");
+            var writer = lengthOnly ? default : OutputWriter.Create(buffer);
+
+            long totalBytes = 0;
+            var _1 = value.Items;
+            if (_1 != null)
+            {
+                foreach (var item in _1)
+                {
+                    totalBytes += ctx.SerializeSubItem(buffer, Instance, in item, 1, WireType.String);
+                }
+            }
+
+            Verbose.WriteLine($"{(lengthOnly ? "sized" : "write")} CustomerMagicWrapper: {totalBytes} bytes");
+            return totalBytes;
         }
         void IResumableDeserializer<ProtoBuf.CustomerMagicWrapper>.Deserialize(in ReadOnlyBuffer buffer, ref ProtoBuf.CustomerMagicWrapper value, DeserializationContext ctx)
         {
+
             Verbose.WriteLine($"[{ctx.Position(0)}] reading CustomerMagicWrapper, [{ctx.Position(0)}]-[{ctx.Position(buffer.Length)}]");
             Debug.Assert(ctx.PositionSlow(buffer.Start) == ctx.Position(0));
             Debug.Assert(ctx.PositionSlow(buffer.End) == ctx.Position(buffer.Length));
@@ -362,7 +584,7 @@ namespace AggressiveNamespace // just to calm down some warnings
                         while (true)
                         {
                             Verbose.WriteLine($"adding customer...");
-                            items.Add(ctx.DeserializeSubItem<Customer>(ref reader, Instance, fieldNumber, wireType));
+                            items.Add(ctx.DeserializeSubItem<Customer>(ref reader, Instance, 1, wireType));
 
                             (fieldNumber, wireType) = ctx.ReadNextField(ref reader);
                             if (fieldNumber != 1) goto HaveField;

@@ -37,7 +37,7 @@ namespace TheAwaitingGame
             // uncomment it first, it produces a lot of output
             //customConfig = customConfig.With(new BenchmarkDotNet.Diagnostics.Windows.InliningDiagnoser(logFailuresOnly: true, filterByNamespace: true));
 #endif
-
+            
             var summary = BenchmarkRunner.Run<Benchmarker>(customConfig);
             Console.WriteLine(summary);
         }
@@ -112,7 +112,8 @@ namespace TheAwaitingGame
 
         const int REPEATS_PER_CUSTOMER = 250;
 
-        [Benchmark(OperationsPerInvoke = REPEATS_PER_CUSTOMER, Description = "single, Stream", Baseline = true)]
+        // [Benchmark(OperationsPerInvoke = REPEATS_PER_CUSTOMER, Description = "read single, Stream")]
+        [BenchmarkCategory("single read")]
         public void DeserializeSingleWithStream()
         {
             var stream = new MemoryStream(_customerBlob);
@@ -123,7 +124,8 @@ namespace TheAwaitingGame
             }
         }
 
-        [Benchmark(OperationsPerInvoke = REPEATS_PER_CUSTOMER, Description = "single, ReadOnlyBuffer")]
+        // [Benchmark(OperationsPerInvoke = REPEATS_PER_CUSTOMER, Description = "read single, ReadOnlyBuffer")]
+        [BenchmarkCategory("single read")]
         public void DeserializeSingleWithBuffer()
         {
             var buffer = new ReadOnlyBuffer(_customerBlob);
@@ -136,7 +138,8 @@ namespace TheAwaitingGame
 
         const int REPEATS_PER_MAGIC_WRAPPER = 5;
 
-        [Benchmark(OperationsPerInvoke = REPEATS_PER_MAGIC_WRAPPER, Description = "multi, Stream" )]
+        // [Benchmark(OperationsPerInvoke = REPEATS_PER_MAGIC_WRAPPER, Description = "read multi, Stream" )]
+        [BenchmarkCategory("multi read")]
         public void DeserializeMultiWithStream()
         {
             var stream = new MemoryStream(_magicWrapperBlob);
@@ -147,7 +150,8 @@ namespace TheAwaitingGame
             }
         }
 
-        [Benchmark(OperationsPerInvoke = REPEATS_PER_MAGIC_WRAPPER, Description = "multi, ReadOnlyBuffer")]
+        // [Benchmark(OperationsPerInvoke = REPEATS_PER_MAGIC_WRAPPER, Description = "read multi, ReadOnlyBuffer")]
+        [BenchmarkCategory("multi read")]
         public void DeserializeMultiWithBuffer()
         {
             var buffer = new ReadOnlyBuffer(_magicWrapperBlob);
@@ -155,6 +159,59 @@ namespace TheAwaitingGame
             {
                 GC.KeepAlive(AggressiveDeserializer.Instance.Deserialize<ProtoBuf.CustomerMagicWrapper>(buffer));
             }
+        }
+
+        PipeOptions _options = new PipeOptions(new MemoryPool());
+        [Benchmark(Description = "write multi, Pipe, single alloc", OperationsPerInvoke = 50)]
+        [BenchmarkCategory("multi write")]
+        public long ReadWriteWithPipeSingleAlloc()
+        {
+            var pipe = new Pipe(_options);
+            var writer = pipe.Writer;
+            var buffer = writer.Alloc();
+            long totalBytes = 0;
+            for (int i = 0; i < 50; i++)
+            {
+                totalBytes += AggressiveDeserializer.Instance.SerializeWithLengthPrefix<ProtoBuf.Customer>(buffer, _customer, 1);
+            }
+            buffer.Commit();
+            writer.Complete();
+            pipe.Reader.Complete();
+            pipe.Reset();
+            return totalBytes;
+        }
+
+        [Benchmark(Description = "write multi, Pipe, alloc per item", OperationsPerInvoke = 50)]
+        [BenchmarkCategory("multi write")]
+        public long ReadWriteWithPipeMultiAlloc()
+        {
+            var pipe = new Pipe(_options);
+            var writer = pipe.Writer;            
+            long totalBytes = 0;
+            for (int i = 0; i < 50; i++)
+            {
+                var buffer = writer.Alloc();
+                totalBytes += AggressiveDeserializer.Instance.SerializeWithLengthPrefix<ProtoBuf.Customer>(buffer, _customer, 1);
+                buffer.Commit();
+            }            
+            writer.Complete();
+            pipe.Reader.Complete();
+            pipe.Reset();
+            return totalBytes;
+        }
+
+
+
+        [Benchmark(Description = "write multi, Stream", OperationsPerInvoke = 50)]
+        [BenchmarkCategory("multi write")]
+        public long ReadWriteWithStream()
+        {
+            var ms = new MemoryStream();
+            for (int i = 0; i < 50; i++)
+            {
+                ProtoBuf.Serializer.SerializeWithLengthPrefix<ProtoBuf.Customer>(ms, _customer, ProtoBuf.PrefixStyle.Base128, 1);
+            }
+            return ms.Length;
         }
 
 #if OLDER_BENCHMARKS
