@@ -32,7 +32,8 @@ namespace AggressiveNamespace // just to calm down some warnings
             return value;
         }
 
-        public static long SerializeWithLengthPrefix<T>(this IResumableDeserializer<T> serializer, in WritableBuffer buffer, in T value, int fieldNumber = 1)
+        public static long SerializeWithLengthPrefix<TBuffer, T>(this IResumableDeserializer<T> serializer, in TBuffer buffer, in T value, int fieldNumber = 1)
+            where TBuffer : IOutput
         {
             var ctx = SimpleCache<DeserializationContext>.Get();
 
@@ -40,7 +41,8 @@ namespace AggressiveNamespace // just to calm down some warnings
             SimpleCache<DeserializationContext>.Recycle(ctx);
             return result;
         }
-        public static long Serialize<T>(this IResumableDeserializer<T> serializer, in WritableBuffer buffer, in T value)
+        public static long Serialize<TBuffer, T>(this IResumableDeserializer<T> serializer, in TBuffer buffer, in T value)
+            where TBuffer : IOutput
         {
             var ctx = SimpleCache<DeserializationContext>.Get();
 
@@ -59,16 +61,17 @@ namespace AggressiveNamespace // just to calm down some warnings
         private static bool HasSpan(ref this BufferReader<ReadOnlyBuffer> reader, int bytes)
                 => reader.Span.Length >= reader.Index + bytes;
 
-        public static int WriteVarint(ref this OutputWriter<WritableBuffer> writer, ulong value)
+        public static int WriteVarint<TBuffer>(ref this OutputWriter<TBuffer> writer, ulong value)
+            where TBuffer : IOutput
         {
-            int Fast(ref OutputWriter<WritableBuffer> w, byte v)
+            int Fast(ref OutputWriter<TBuffer> w, byte v)
             {
                 w.Ensure(1);
                 w.Span[0] = v;
                 w.Advance(1);
                 return 1;
             }
-            int Slow(ref OutputWriter<WritableBuffer> w, ulong v)
+            int Slow(ref OutputWriter<TBuffer> w, ulong v)
             {
                 w.Ensure(10);
                 var span = w.Span;
@@ -84,13 +87,21 @@ namespace AggressiveNamespace // just to calm down some warnings
                 w.Advance(len);
                 return len;
             }
-            return value < 128 ? Fast(ref writer, (byte)value) : Slow(ref writer, value);
+            if (typeof(TBuffer) == typeof(NilOutput))
+            {
+                return VarintLength(value);
+            }
+            else
+            {
+                return value < 128 ? Fast(ref writer, (byte)value) : Slow(ref writer, value);
+            }
         }
 
-        public static unsafe int WriteString(ref this OutputWriter<WritableBuffer> writer, string value)
+        public static unsafe int WriteString<TBuffer>(ref this OutputWriter<TBuffer> writer, string value)
+            where TBuffer : IOutput
         {
 
-            int Fast(ref OutputWriter<WritableBuffer> w, string v, int c, int estimate)
+            int Fast(ref OutputWriter<TBuffer> w, string v, int c, int estimate)
             {
                 w.Ensure(estimate + 1);
                 var span = w.Span;
@@ -106,7 +117,7 @@ namespace AggressiveNamespace // just to calm down some warnings
                 w.Advance(++estimate);
                 return estimate;
             }
-            int Slow(ref OutputWriter<WritableBuffer> w, string v, int c, int knownSize)
+            int Slow(ref OutputWriter<TBuffer> w, string v, int c, int knownSize)
             {
                 int totalWritten = WriteVarint(ref w, (uint)knownSize);
 
@@ -172,33 +183,33 @@ namespace AggressiveNamespace // just to calm down some warnings
 
         }
 
-        public static int WriteVarint(in this WritableBuffer writer, ulong value)
-        {
-            int Fast(in WritableBuffer w, byte v)
-            {
-                w.Ensure(1);
-                w.Buffer.Span[0] = v;
-                w.Advance(1);
-                return 1;
-            }
-            int Slow(in WritableBuffer w, ulong v)
-            {
-                w.Ensure(10);
-                var span = w.Buffer.Span;
-                int len = 1;
-                span[0] = (byte)(((uint)v & 127U) | 128);
-                v >>= 7;
-                while (v != 0)
-                {
-                    span[len++] = (byte)(((uint)v & 127U) | 128);
-                    v >>= 7;
-                }
-                span[len - 1] &= 127;
-                w.Advance(len);
-                return len;
-            }
-            return value < 128 ? Fast(writer, (byte)value) : Slow(writer, value);
-        }
+        //public static int WriteVarint(in this WritableBuffer writer, ulong value)
+        //{
+        //    int Fast(in WritableBuffer w, byte v)
+        //    {
+        //        w.Ensure(1);
+        //        w.Buffer.Span[0] = v;
+        //        w.Advance(1);
+        //        return 1;
+        //    }
+        //    int Slow(in WritableBuffer w, ulong v)
+        //    {
+        //        w.Ensure(10);
+        //        var span = w.Buffer.Span;
+        //        int len = 1;
+        //        span[0] = (byte)(((uint)v & 127U) | 128);
+        //        v >>= 7;
+        //        while (v != 0)
+        //        {
+        //            span[len++] = (byte)(((uint)v & 127U) | 128);
+        //            v >>= 7;
+        //        }
+        //        span[len - 1] &= 127;
+        //        w.Advance(len);
+        //        return len;
+        //    }
+        //    return value < 128 ? Fast(writer, (byte)value) : Slow(writer, value);
+        //}
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         static int VarintLength(uint value)
@@ -520,12 +531,26 @@ namespace AggressiveNamespace // just to calm down some warnings
         public static AggressiveDeserializer Instance { get; } = new AggressiveDeserializer();
         private AggressiveDeserializer() { }
 
-        long IResumableDeserializer<ProtoBuf.Order>.Serialize(in WritableBuffer buffer, in ProtoBuf.Order value, DeserializationContext ctx)
-        {
-            bool lengthOnly = ctx.LengthOnly;
-            Verbose.WriteLine($"{(lengthOnly ? "sizing" : "writing")} Order");
+        //long IResumableDeserializer<ProtoBuf.Order>.GetLength(in Order value, DeserializationContext ctx)
+        //{
+        //    Verbose.WriteLine($"sizing Order");
 
-            var writer = lengthOnly ? default : OutputWriter.Create(buffer);
+        //    long totalBytes = 0;
+        //    totalBytes += ctx.GetLengthInt32(1, WireType.Varint, value.Id, 0);
+        //    totalBytes += ctx.GetLengthString(2, WireType.String, value.ProductCode, "");
+        //    totalBytes += ctx.GetLengthInt32(3, WireType.Varint, value.Quantity, 0);
+        //    totalBytes += ctx.GetLengthDouble(4, WireType.Fixed64, value.UnitPrice, 0.0);
+        //    totalBytes += ctx.GetLengthString(5, WireType.String, value.Notes, "");
+
+        //    Verbose.WriteLine($"sized Order: {totalBytes} bytes");
+        //    return totalBytes;
+        //}
+
+        long IResumableDeserializer<ProtoBuf.Order>.Serialize<TBuffer>(in TBuffer buffer, in ProtoBuf.Order value, DeserializationContext ctx)
+        {
+            Verbose.WriteLine($"writing Order");
+
+            var writer = OutputWriter.Create(buffer);
             long totalBytes = 0;
 
             totalBytes += ctx.WriteInt32(ref writer, 1, WireType.Varint, value.Id, 0);
@@ -534,15 +559,37 @@ namespace AggressiveNamespace // just to calm down some warnings
             totalBytes += ctx.WriteDouble(ref writer, 4, WireType.Fixed64, value.UnitPrice, 0.0);
             totalBytes += ctx.WriteString(ref writer, 5, WireType.String, value.Notes, "");
 
-            Verbose.WriteLine($"{(lengthOnly ? "sized" : "write")} Order: {totalBytes} bytes");
+            Verbose.WriteLine($"wrote Order: {totalBytes} bytes");
             return totalBytes;
         }
-        long IResumableDeserializer<ProtoBuf.Customer>.Serialize(in WritableBuffer buffer, in ProtoBuf.Customer value, DeserializationContext ctx)
-        {
-            bool lengthOnly = ctx.LengthOnly;
-            Verbose.WriteLine($"{(lengthOnly ? "sizing" : "writing")} Customer");
+        //long IResumableDeserializer<ProtoBuf.Customer>.GetLength(in Customer value, DeserializationContext ctx)
+        //{
+        //    Verbose.WriteLine($"sizing Customer");
 
-            var writer = lengthOnly ? default : OutputWriter.Create(buffer);
+        //    long totalBytes = 0;
+
+        //    totalBytes += ctx.GetLengthInt32(1, WireType.Varint, value.Id, 0);
+        //    totalBytes += ctx.GetLengthString(2, WireType.String, value.Name, "");
+        //    totalBytes += ctx.GetLengthString(3, WireType.String, value.Notes, "");
+        //    totalBytes += ctx.GetLengthDouble(4, WireType.Fixed64, value.MarketValue, 0.0);
+
+        //    var _5 = value.Orders;
+        //    if (_5 != null)
+        //    {
+        //        foreach (var item in _5)
+        //        {
+        //            totalBytes += ctx.GetLengthSubItem(Instance, in item, 5, WireType.String);
+        //        }
+        //    }
+
+        //    Verbose.WriteLine($"sized Customer: {totalBytes} bytes");
+        //    return totalBytes;
+        //}
+        long IResumableDeserializer<ProtoBuf.Customer>.Serialize<TBuffer>(in TBuffer buffer, in ProtoBuf.Customer value, DeserializationContext ctx)
+        {
+            Verbose.WriteLine($"writing Customer");
+
+            var writer = OutputWriter.Create(buffer);
             long totalBytes = 0;
 
             totalBytes += ctx.WriteInt32(ref writer, 1, WireType.Varint, value.Id, 0);
@@ -559,14 +606,31 @@ namespace AggressiveNamespace // just to calm down some warnings
                 }
             }
 
-            Verbose.WriteLine($"{(lengthOnly ? "sized" : "write")} Customer: {totalBytes} bytes");
+            Verbose.WriteLine($"wrote Customer: {totalBytes} bytes");
             return totalBytes;
         }
-        long IResumableDeserializer<ProtoBuf.CustomerMagicWrapper>.Serialize(in WritableBuffer buffer, in ProtoBuf.CustomerMagicWrapper value, DeserializationContext ctx)
+
+        //long IResumableDeserializer<ProtoBuf.CustomerMagicWrapper>.GetLength(in ProtoBuf.CustomerMagicWrapper value, DeserializationContext ctx)
+        //{
+        //    Verbose.WriteLine($"sizing CustomerMagicWrapper");
+        
+        //    long totalBytes = 0;
+        //    var _1 = value.Items;
+        //    if (_1 != null)
+        //    {
+        //        foreach (var item in _1)
+        //        {
+        //            totalBytes += ctx.GetLengthSubItem(Instance, in item, 1, WireType.String);
+        //        }
+        //    }
+
+        //    Verbose.WriteLine($"sized CustomerMagicWrapper: {totalBytes} bytes");
+        //    return totalBytes;
+        //}
+        long IResumableDeserializer<ProtoBuf.CustomerMagicWrapper>.Serialize<TBuffer>(in TBuffer buffer, in ProtoBuf.CustomerMagicWrapper value, DeserializationContext ctx)
         {
-            bool lengthOnly = ctx.LengthOnly;
-            Verbose.WriteLine($"{(lengthOnly ? "sizing" : "writing")} CustomerMagicWrapper");
-            var writer = lengthOnly ? default : OutputWriter.Create(buffer);
+            Verbose.WriteLine($"writing CustomerMagicWrapper");
+            var writer = OutputWriter.Create(buffer);
 
             long totalBytes = 0;
             var _1 = value.Items;
@@ -578,7 +642,7 @@ namespace AggressiveNamespace // just to calm down some warnings
                 }
             }
 
-            Verbose.WriteLine($"{(lengthOnly ? "sized" : "write")} CustomerMagicWrapper: {totalBytes} bytes");
+            Verbose.WriteLine($"wrote CustomerMagicWrapper: {totalBytes} bytes");
             return totalBytes;
         }
         void IResumableDeserializer<ProtoBuf.CustomerMagicWrapper>.Deserialize(in ReadOnlyBuffer buffer, ref ProtoBuf.CustomerMagicWrapper value, DeserializationContext ctx)
