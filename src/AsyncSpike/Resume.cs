@@ -249,10 +249,25 @@ namespace AggressiveNamespace
         public bool LengthOnly => _lengthOnlyCount != 0;
         internal void IncrementAwaitCount() => AwaitCount++;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         static ulong FieldHeader(int fieldNumber, WireType wireType)
             => (((ulong)fieldNumber) << 3) | (uint)wireType;
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        static int FieldHeaderLength(int fieldNumber)
+        {
+            if ((fieldNumber & ~15) == 0) return 1;
+            int len = 1;
+            uint value = (uint)fieldNumber >> 4;
 
+            do
+            {
+                value >>= 7;
+                len++;
+            }
+            while ((value & ~127U) != 0);
+            return len;
+        }
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         static int VarintLength(uint value)
         {
@@ -293,8 +308,8 @@ namespace AggressiveNamespace
                 headerLength += buffer.WriteVarint((ulong)expectedLength);
 
                 long actualLength = serializer.Serialize(buffer, value, this);
-                if (actualLength != expectedLength)
-                    throw new InvalidOperationException($"Length was incorrect; calculated {expectedLength}, was {actualLength}");
+                //if (actualLength != expectedLength)
+                //    throw new InvalidOperationException($"Length was incorrect; calculated {expectedLength}, was {actualLength}");
                 return headerLength + actualLength;
             }
             else
@@ -312,7 +327,7 @@ namespace AggressiveNamespace
             int headerLen;
             if (LengthOnly)
             {
-                headerLen = VarintLength(FieldHeader(fieldNumber, wireType));
+                headerLen = FieldHeaderLength(fieldNumber);
                 switch (wireType)
                 {
                     case WireType.Fixed32: return headerLen + 4;
@@ -372,8 +387,9 @@ namespace AggressiveNamespace
 
             if (LengthOnly)
             {
-                int bytes = Encoding.GetByteCount(value);
-                return VarintLength(FieldHeader(fieldNumber, wireType))
+                int bytes = value.Length << 2;
+                // int bytes = Encoding.GetByteCount(value);
+                return FieldHeaderLength(fieldNumber)
                     + VarintLength((uint)bytes) + bytes;
             }
             else
@@ -389,7 +405,7 @@ namespace AggressiveNamespace
             int headerLen;
             if (LengthOnly)
             {
-                headerLen = VarintLength(FieldHeader(fieldNumber, wireType));
+                headerLen = FieldHeaderLength(fieldNumber);
                 switch (wireType)
                 {
                     case WireType.Fixed32: return headerLen + 4;
