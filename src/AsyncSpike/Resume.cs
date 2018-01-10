@@ -308,8 +308,8 @@ namespace AggressiveNamespace
                 headerLength += buffer.WriteVarint((ulong)expectedLength);
 
                 long actualLength = serializer.Serialize(buffer, value, this);
-                //if (actualLength != expectedLength)
-                //    throw new InvalidOperationException($"Length was incorrect; calculated {expectedLength}, was {actualLength}");
+                if (actualLength != expectedLength)
+                    throw new InvalidOperationException($"Length was incorrect; calculated {expectedLength}, was {actualLength}");
                 return headerLength + actualLength;
             }
             else
@@ -387,8 +387,8 @@ namespace AggressiveNamespace
 
             if (LengthOnly)
             {
-                int bytes = value.Length << 2;
-                // int bytes = Encoding.GetByteCount(value);
+                // int bytes = value.Length << 2;
+                int bytes = Encoding.GetByteCount(value);
                 return FieldHeaderLength(fieldNumber)
                     + VarintLength((uint)bytes) + bytes;
             }
