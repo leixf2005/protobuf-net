@@ -13,6 +13,7 @@ using System.IO;
 using System.Buffers;
 using AggressiveNamespace;
 using System.IO.Pipelines;
+using BenchmarkDotNet.Attributes.Columns;
 
 namespace TheAwaitingGame
 {
@@ -42,7 +43,8 @@ namespace TheAwaitingGame
             Console.WriteLine(summary);
         }
     }
-
+    [GroupBenchmarksBy(BenchmarkLogicalGroupRule.ByCategory)]
+    [CategoriesColumn]
     public class Benchmarker
     {
         static ProtoBuf.Customer _customer;
@@ -112,7 +114,7 @@ namespace TheAwaitingGame
 
         const int REPEATS_PER_CUSTOMER = 250;
 
-        [Benchmark(OperationsPerInvoke = REPEATS_PER_CUSTOMER, Description = "read single, Stream")]
+        [Benchmark(OperationsPerInvoke = REPEATS_PER_CUSTOMER, Description = "Stream", Baseline = true)]
         [BenchmarkCategory("single read")]
         public void DeserializeSingleWithStream()
         {
@@ -124,7 +126,7 @@ namespace TheAwaitingGame
             }
         }
 
-        [Benchmark(OperationsPerInvoke = REPEATS_PER_CUSTOMER, Description = "read single, ReadOnlyBuffer")]
+        [Benchmark(OperationsPerInvoke = REPEATS_PER_CUSTOMER, Description = "ReadOnlyBuffer")]
         [BenchmarkCategory("single read")]
         public void DeserializeSingleWithBuffer()
         {
@@ -138,7 +140,7 @@ namespace TheAwaitingGame
 
         const int REPEATS_PER_MAGIC_WRAPPER = 5;
 
-        [Benchmark(OperationsPerInvoke = REPEATS_PER_MAGIC_WRAPPER, Description = "read multi, Stream" )]
+        [Benchmark(OperationsPerInvoke = REPEATS_PER_MAGIC_WRAPPER, Description = "Stream", Baseline = true)]
         [BenchmarkCategory("multi read")]
         public void DeserializeMultiWithStream()
         {
@@ -150,7 +152,7 @@ namespace TheAwaitingGame
             }
         }
 
-        [Benchmark(OperationsPerInvoke = REPEATS_PER_MAGIC_WRAPPER, Description = "read multi, ReadOnlyBuffer")]
+        [Benchmark(OperationsPerInvoke = REPEATS_PER_MAGIC_WRAPPER, Description = "ReadOnlyBuffer")]
         [BenchmarkCategory("multi read")]
         public void DeserializeMultiWithBuffer()
         {
@@ -162,7 +164,7 @@ namespace TheAwaitingGame
         }
 
         PipeOptions _options = new PipeOptions(new MemoryPool());
-        [Benchmark(Description = "write multi, Pipe, single alloc", OperationsPerInvoke = 50)]
+        [Benchmark(Description = "Pipe, single alloc", OperationsPerInvoke = 50)]
         [BenchmarkCategory("multi write")]
         public long WriteWithPipeSingleAlloc()
         {
@@ -181,8 +183,8 @@ namespace TheAwaitingGame
             return totalBytes;
         }
 
-        [Benchmark(Description = "read/write, Pipe, alloc per item", OperationsPerInvoke = 50)]
-        [BenchmarkCategory("multi write")]
+        [Benchmark(Description = "Pipe, alloc per item", OperationsPerInvoke = 50)]
+        [BenchmarkCategory("read/write")]
         public async ValueTask<long> ReadWriteWithPipeMultiAlloc()
         {
             var pipe = new Pipe(_options);
@@ -202,7 +204,7 @@ namespace TheAwaitingGame
             return totalBytes;
         }
 
-        [Benchmark(Description = "write multi, Pipe, alloc per item", OperationsPerInvoke = 50)]
+        [Benchmark(Description = "Pipe, alloc per item", OperationsPerInvoke = 50)]
         [BenchmarkCategory("multi write")]
         public long WriteWithPipeMultiAlloc()
         {
@@ -223,7 +225,7 @@ namespace TheAwaitingGame
 
 
 
-        [Benchmark(Description = "write multi, Stream", OperationsPerInvoke = 50)]
+        [Benchmark(Description = "Stream", OperationsPerInvoke = 50, Baseline = true)]
         [BenchmarkCategory("multi write")]
         public long WriteWithStream()
         {
@@ -235,8 +237,8 @@ namespace TheAwaitingGame
             return ms.Length;
         }
 
-        [Benchmark(Description = "read/write, Stream", OperationsPerInvoke = 50)]
-        [BenchmarkCategory("multi write")]
+        [Benchmark(Description = "Stream", OperationsPerInvoke = 50, Baseline = true)]
+        [BenchmarkCategory("read/write")]
         public long ReadWriteWithStream()
         {
             var ms = new MemoryStream();
