@@ -33,6 +33,7 @@ namespace TheAwaitingGame
                 .With(StatisticColumn.OperationsPerSecond) // add ops/s
                 .With(Job.Default.With(gcMode));
 
+
 #if NET462
             // enable the Inlining Diagnoser to find out what does not get inlined
             // uncomment it first, it produces a lot of output
@@ -164,6 +165,7 @@ namespace TheAwaitingGame
         }
 
         PipeOptions _options = new PipeOptions(new MemoryPool());
+
         [Benchmark(Description = "Pipe, single alloc", OperationsPerInvoke = 50)]
         [BenchmarkCategory("multi write")]
         public long WriteWithPipeSingleAlloc()
@@ -174,7 +176,7 @@ namespace TheAwaitingGame
             long totalBytes = 0;
             for (int i = 0; i < 50; i++)
             {
-                totalBytes += AggressiveDeserializer.Instance.SerializeWithLengthPrefix<ProtoBuf.Customer>(buffer, _customer, 1);
+                totalBytes += AggressiveDeserializer.Instance.SerializeWithLengthPrefix(buffer, _customer, 1);
             }
             buffer.Commit();
             writer.Complete();
@@ -193,7 +195,7 @@ namespace TheAwaitingGame
             for (int i = 0; i < 50; i++)
             {
                 var buffer = writer.Alloc();
-                totalBytes += AggressiveDeserializer.Instance.SerializeWithLengthPrefix<ProtoBuf.Customer>(buffer, _customer, 1);
+                totalBytes += AggressiveDeserializer.Instance.SerializeWithLengthPrefix(buffer, _customer, 1);
                 buffer.Commit();
             }
             writer.Complete();
@@ -214,7 +216,7 @@ namespace TheAwaitingGame
             for (int i = 0; i < 50; i++)
             {
                 var buffer = writer.Alloc();
-                totalBytes += AggressiveDeserializer.Instance.SerializeWithLengthPrefix<ProtoBuf.Customer>(buffer, _customer, 1);
+                totalBytes += AggressiveDeserializer.Instance.SerializeWithLengthPrefix(buffer, _customer, 1);
                 buffer.Commit();
             }            
             writer.Complete();
