@@ -138,7 +138,7 @@ namespace ProtoBuf
                 }
             }
 
-            private protected override int ImplTryReadUInt32VarintWithoutMoving(ref State state, Read32VarintMode mode, out uint value)
+            private protected override int FallbackTryReadUInt32VarintWithoutMoving(ref State state, out uint value)
             {
                 if (_available < 10) Ensure(10, false);
                 if (_available == 0)
@@ -171,22 +171,11 @@ namespace ProtoBuf
                 value |= chunk << 28; // can only use 4 bits from this chunk
                 if ((chunk & 0xF0) == 0) return 5;
 
-                if (mode == Read32VarintMode.Signed // allow for -ve values
-                    && (chunk & 0xF0) == 0xF0
-                    && _available >= 10
-                        && _ioBuffer[++readPos] == 0xFF
-                        && _ioBuffer[++readPos] == 0xFF
-                        && _ioBuffer[++readPos] == 0xFF
-                        && _ioBuffer[++readPos] == 0xFF
-                        && _ioBuffer[++readPos] == 0x01)
-                {
-                    return 10;
-                }
                 ThrowOverflow(this);
                 return 0;
             }
 
-            private protected override ulong ImplReadUInt64Fixed(ref State state)
+            private protected override ulong FallbackReadUInt64Fixed(ref State state)
             {
                 if (_available < 8) Ensure(8, true);
                 Advance(8);
@@ -208,7 +197,7 @@ namespace ProtoBuf
                     | (((ulong)buffer[_ioIndex++]) << 56);
 #endif
             }
-            private protected override void ImplReadBytes(ref State state, ArraySegment<byte> target)
+            private protected override void FallbackReadBytes(ref State state, ArraySegment<byte> target)
             {
                 var value = target.Array;
                 var offset = target.Offset;
@@ -239,7 +228,14 @@ namespace ProtoBuf
                 }
             }
 
-            private protected override int ImplTryReadUInt64VarintWithoutMoving(ref State state, out ulong value)
+            private protected override ulong FallbackReadUInt64Varint(ref State state)
+            {
+                var bytes = TryReadUInt64VarintWithoutMoving(ref state, out var value);
+                ImplSkipBytes(this, ref state, bytes);
+                return value;
+            }
+
+            private int TryReadUInt64VarintWithoutMoving(ref State state, out ulong value)
             {
                 if (_available < 10) Ensure(10, false);
                 if (_available == 0)
@@ -300,7 +296,7 @@ namespace ProtoBuf
                 return 10;
             }
 
-            private protected override string ImplReadString(ref State state, int bytes)
+            private protected override string FallbackReadString(ref State state, int bytes)
             {
                 if (_available < bytes) Ensure(bytes, true);
 
@@ -315,7 +311,7 @@ namespace ProtoBuf
             private protected override bool IsFullyConsumed(ref State state) =>
                 (_isFixedLength ? _dataRemaining64 : _available) == 0;
 
-            private protected override uint ImplReadUInt32Fixed(ref State state)
+            private protected override uint FallbackReadUInt32Fixed(ref State state)
             {
                 if (_available < 4) Ensure(4, true);
                 Advance(4);
@@ -384,8 +380,7 @@ namespace ProtoBuf
                 Dispose();
                 lastReader = this;
             }
-
-            private protected override void ImplSkipBytes(ref State state, long count)
+            private protected override void FallbackSkipBytes(ref State state, long count)
             {
                 if (_available < count && count < 128)
                 {

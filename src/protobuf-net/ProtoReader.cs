@@ -94,37 +94,65 @@ namespace ProtoBuf
             if (netCache != null) netCache.Clear();
         }
 
-        private protected enum Read32VarintMode
+        private static uint ImplReadFieldHeader(ProtoReader reader, ref State state)
         {
-            Signed,
-            Unsigned,
-            FieldHeader,
-        }
-
-        private uint ReadUInt32Varint(ref State state, Read32VarintMode mode)
-        {
-            int read = ImplTryReadUInt32VarintWithoutMoving(ref state, mode, out uint value);
-            if (read <= 0)
+            if (state.RemainingInCurrent >= 5)
             {
-                if (mode == Read32VarintMode.FieldHeader) return 0;
-                ThrowEoF(this);
+                reader.Advance(state.ReadVarintUInt32(out var tag));
+                return tag;
             }
-            ImplSkipBytes(ref state, read);
+            return reader.FallbackReadFieldHeader(ref state);
+        }
+        private protected virtual uint FallbackReadFieldHeader(ref State state)
+        {
+            int read = ImplTryReadUInt32VarintWithoutMoving(this, ref state, out uint value);
+            if (read == 0) return 0;
+            ImplSkipBytes(this, ref state, read);
             return value;
         }
 
-        private ulong ReadUInt64Varint(ref State state)
+        private static int ImplReadInt32Varint(ProtoReader reader, ref State state)
         {
-            int read = ImplTryReadUInt64VarintWithoutMoving(ref state, out ulong value);
-            if (read <= 0)
+            ulong val;
+            if (state.RemainingInCurrent >= 10)
             {
-                ThrowEoF(this);
+                reader.Advance(state.ReadVarintUInt64(out val));
             }
-            ImplSkipBytes(ref state, read);
+            else
+            {
+                val = reader.FallbackReadUInt64Varint(ref state);
+            }
+            return checked((int)unchecked((long)val));
+        }
+        private static uint ImplReadUInt32Varint(ProtoReader reader, ref State state)
+        {
+            if (state.RemainingInCurrent >= 5)
+            {
+                reader.Advance(state.ReadVarintUInt32(out var val));
+                return val;
+            }
+            return reader.FallbackUInt32Varint(ref state);
+        }
+        private protected virtual uint FallbackUInt32Varint(ref State state)
+        {
+            int read = ImplTryReadUInt32VarintWithoutMoving(this, ref state, out uint value);
+            if (read == 0) ThrowEoF(this);
+            ImplSkipBytes(this, ref state, read);
             return value;
         }
 
-        private protected abstract int ImplTryReadUInt64VarintWithoutMoving(ref State state, out ulong value);
+        private static ulong ImplReadUInt64Varint(ProtoReader reader, ref State state)
+        {
+            if (state.RemainingInCurrent >= 10)
+            {
+                var bytes = state.ReadVarintUInt64(out var val);
+                reader.Advance(bytes);
+                return val;
+            }
+            return reader.FallbackReadUInt64Varint(ref state);
+        }
+
+        private protected abstract ulong FallbackReadUInt64Varint(ref State state);
 
         /// <summary>
         /// Returns the position of the current reader (note that this is not necessarily the same as the position
@@ -231,11 +259,11 @@ namespace ProtoBuf
             switch (WireType)
             {
                 case WireType.Variant:
-                    return ReadUInt32Varint(ref state, Read32VarintMode.Signed);
+                    return ImplReadUInt32Varint(this, ref state);
                 case WireType.Fixed32:
-                    return ImplReadUInt32Fixed(ref state);
+                    return ImplReadUInt32Fixed(this, ref state);
                 case WireType.Fixed64:
-                    ulong val = ImplReadUInt64Fixed(ref state);
+                    ulong val = ImplReadUInt64Fixed(this, ref state);
                     checked { return (uint)val; }
                 default:
                     throw CreateWireTypeException();
@@ -260,21 +288,40 @@ namespace ProtoBuf
             switch (WireType)
             {
                 case WireType.Variant:
-                    return (int)ReadUInt32Varint(ref state, Read32VarintMode.Signed);
+                    return ImplReadInt32Varint(this, ref state);
                 case WireType.Fixed32:
-                    return (int)ImplReadUInt32Fixed(ref state);
+                    return (int)ImplReadUInt32Fixed(this, ref state);
                 case WireType.Fixed64:
                     long l = ReadInt64(ref state);
                     checked { return (int)l; }
                 case WireType.SignedVariant:
-                    return Zag(ReadUInt32Varint(ref state, Read32VarintMode.Signed));
+                    return Zag(ImplReadUInt32Varint(this, ref state));
                 default:
                     throw CreateWireTypeException();
             }
         }
 
-        private protected abstract uint ImplReadUInt32Fixed(ref State state);
-        private protected abstract ulong ImplReadUInt64Fixed(ref State state);
+        private static uint ImplReadUInt32Fixed(ProtoReader reader, ref State state)
+        {
+            if (state.RemainingInCurrent >= 4)
+            {
+                reader.Advance(4);
+                return state.ReadFixedUInt32();
+            }
+            return reader.FallbackReadUInt32Fixed(ref state);
+        }
+        private protected abstract uint FallbackReadUInt32Fixed(ref State state);
+        private static ulong ImplReadUInt64Fixed(ProtoReader reader, ref State state)
+        {
+            if (state.RemainingInCurrent >= 8)
+            {
+                reader.Advance(8);
+                return state.ReadFixedUInt64();
+            }
+            return reader.FallbackReadUInt64Fixed(ref state);
+        }
+
+        private protected abstract ulong FallbackReadUInt64Fixed(ref State state);
 
         private const long Int64Msb = ((long)1) << 63;
         private const int Int32Msb = ((int)1) << 31;
@@ -308,13 +355,13 @@ namespace ProtoBuf
             switch (WireType)
             {
                 case WireType.Variant:
-                    return (long)ReadUInt64Varint(ref state);
+                    return (long)ImplReadUInt64Varint(this, ref state);
                 case WireType.Fixed32:
-                    return (int)ImplReadUInt32Fixed(ref state);
+                    return (int)ImplReadUInt32Fixed(this, ref state);
                 case WireType.Fixed64:
-                    return (long)ImplReadUInt64Fixed(ref state);
+                    return (long)ImplReadUInt64Fixed(this, ref state);
                 case WireType.SignedVariant:
-                    return Zag(ReadUInt64Varint(ref state));
+                    return Zag(ImplReadUInt64Varint(this, ref state));
                 default:
                     throw CreateWireTypeException();
             }
@@ -365,16 +412,26 @@ namespace ProtoBuf
         {
             if (WireType == WireType.String)
             {
-                int bytes = (int)ReadUInt32Varint(ref state, Read32VarintMode.Unsigned);
+                int bytes = (int)ImplReadUInt32Varint(this, ref state);
                 if (bytes == 0) return "";
-                var s = ImplReadString(ref state, bytes);
+                var s = ImplReadString(this, ref state, bytes);
                 if (InternStrings) { s = Intern(s); }
                 return s;
             }
             throw CreateWireTypeException();
         }
 
-        private protected abstract string ImplReadString(ref State state, int bytes);
+        private static string ImplReadString(ProtoReader reader, ref State state, int bytes)
+        {
+            if(state.RemainingInCurrent >= bytes)
+            {
+                reader.Advance(bytes);
+                return state.ReadString(bytes);
+            }
+            return reader.FallbackReadString(ref state, bytes);
+        }
+
+        private protected abstract string FallbackReadString(ref State state, int bytes);
 
         /// <summary>
         /// Throws an exception indication that the given value cannot be mapped to an enum.
@@ -418,7 +475,6 @@ namespace ProtoBuf
                     long value = ReadInt64(ref state);
 #if FEAT_SAFE
                     return BitConverter.Int64BitsToDouble(value);
-                    // return BitConverter.ToDouble(BitConverter.GetBytes(value), 0);
 #else
                     unsafe { return *(double*)&value; }
 #endif
@@ -524,7 +580,7 @@ namespace ProtoBuf
                     reader._depth++;
                     return new SubItemToken((long)(-reader._fieldNumber));
                 case WireType.String:
-                    long len = (long)reader.ReadUInt64Varint(ref state);
+                    long len = (long)ImplReadUInt64Varint(reader, ref state);
                     if (len < 0) throw AddErrorData(new InvalidOperationException(), reader);
                     long lastEnd = reader.blockEnd64;
                     reader.blockEnd64 = reader.LongPosition + len;
@@ -557,10 +613,9 @@ namespace ProtoBuf
             // then be called)
             if (blockEnd64 <= LongPosition || WireType == WireType.EndGroup) { return 0; }
 
-            var read = ImplTryReadUInt32VarintWithoutMoving(ref state, Read32VarintMode.FieldHeader, out uint tag);
-            if (read != 0)
+            var tag = ImplReadFieldHeader(this, ref state);
+            if (tag != 0)
             {
-                ImplSkipBytes(ref state, read);
                 WireType = (WireType)(tag & 7);
                 _fieldNumber = (int)(tag >> 3);
                 if (_fieldNumber < 1) throw new ProtoException("Invalid field in source data: " + _fieldNumber.ToString());
@@ -598,20 +653,30 @@ namespace ProtoBuf
             // check for virtual end of stream
             if (blockEnd64 <= LongPosition || WireType == WireType.EndGroup) { return false; }
 
-            int read = ImplTryReadUInt32VarintWithoutMoving(ref state, Read32VarintMode.FieldHeader, out uint tag);
+            int read = ImplTryReadUInt32VarintWithoutMoving(this, ref state, out uint tag);
             WireType tmpWireType; // need to catch this to exclude (early) any "end group" tokens
             if (read > 0 && ((int)tag >> 3) == field
                 && (tmpWireType = (WireType)(tag & 7)) != WireType.EndGroup)
             {
                 WireType = tmpWireType;
                 _fieldNumber = field;
-                ImplSkipBytes(ref state, read);
+                ImplSkipBytes(this, ref state, read);
                 return true;
             }
             return false;
         }
 
-        private protected abstract int ImplTryReadUInt32VarintWithoutMoving(ref State state, Read32VarintMode mode, out uint value);
+        private static int ImplTryReadUInt32VarintWithoutMoving(ProtoReader reader, ref State state, out uint value)
+        {
+            if (state.RemainingInCurrent >= 5)
+            {
+                var snapshot = state;
+                return snapshot.ReadVarintUInt32(out value);
+            }
+            return reader.FallbackTryReadUInt32VarintWithoutMoving(ref state, out value);
+        }
+
+        private protected abstract int FallbackTryReadUInt32VarintWithoutMoving(ref State state, out uint value);
 
         /// <summary>
         /// Get the TypeModel associated with this reader
@@ -651,7 +716,19 @@ namespace ProtoBuf
             }
         }
 
-        private protected abstract void ImplSkipBytes(ref State state, long count);
+        private static void ImplSkipBytes(ProtoReader reader, ref State state, long count)
+        {
+            if (state.RemainingInCurrent >= count)
+            {
+                state.Skip((int)count);
+                reader.Advance(count);
+            }
+            else
+            {
+                reader.FallbackSkipBytes(ref state, count);
+            }
+        }
+        private protected abstract void FallbackSkipBytes(ref State state, long count);
 
         /// <summary>
         /// Discards the data for the current field.
@@ -671,18 +748,18 @@ namespace ProtoBuf
             switch (WireType)
             {
                 case WireType.Fixed32:
-                    ImplSkipBytes(ref state, 4);
+                    ImplSkipBytes(this, ref state, 4);
                     return;
                 case WireType.Fixed64:
-                    ImplSkipBytes(ref state, 8);
+                    ImplSkipBytes(this, ref state, 8);
                     return;
                 case WireType.String:
-                    long len = (long)ReadUInt64Varint(ref state);
-                    ImplSkipBytes(ref state, len);
+                    long len = (long)ImplReadUInt64Varint(this, ref state);
+                    ImplSkipBytes(this, ref state, len);
                     return;
                 case WireType.Variant:
                 case WireType.SignedVariant:
-                    ReadUInt64Varint(ref state); // and drop it
+                    ImplReadUInt64Varint(this, ref state); // and drop it
                     return;
                 case WireType.StartGroup:
                     int originalFieldNumber = this._fieldNumber;
@@ -720,11 +797,11 @@ namespace ProtoBuf
             switch (WireType)
             {
                 case WireType.Variant:
-                    return ReadUInt64Varint(ref state);
+                    return ImplReadUInt64Varint(this, ref state);
                 case WireType.Fixed32:
-                    return ImplReadUInt32Fixed(ref state);
+                    return ImplReadUInt32Fixed(this, ref state);
                 case WireType.Fixed64:
-                    return ImplReadUInt64Fixed(ref state);
+                    return ImplReadUInt64Fixed(this, ref state);
                 default:
                     throw CreateWireTypeException();
             }
@@ -819,7 +896,7 @@ namespace ProtoBuf
                 switch (WireType)
                 {
                     case WireType.String:
-                        int len = (int)ReadUInt32Varint(ref state, Read32VarintMode.Signed);
+                        int len = (int)ImplReadUInt32Varint(this, ref state);
                         WireType = WireType.None;
                         if (len == 0) return value ?? EmptyBlob;
                         int offset;
@@ -835,7 +912,7 @@ namespace ProtoBuf
                             Buffer.BlockCopy(value, 0, tmp, 0, value.Length);
                             value = tmp;
                         }
-                        ImplReadBytes(ref state, new ArraySegment<byte>(value, offset, len));
+                        ImplReadBytes(this, ref state, new ArraySegment<byte>(value, offset, len));
                         return value;
                     case WireType.Variant:
                         return new byte[0];
@@ -845,7 +922,16 @@ namespace ProtoBuf
             }
         }
 
-        private protected abstract void ImplReadBytes(ref State state, ArraySegment<byte> target);
+        private static void ImplReadBytes(ProtoReader reader, ref State state, ArraySegment<byte> target)
+        {
+            if (state.RemainingInCurrent >= target.Count)
+            {
+                state.ReadBytes(target);
+                reader.Advance(target.Count);
+            }
+            else reader.FallbackReadBytes(ref state, target);
+        }
+        private protected abstract void FallbackReadBytes(ref State state, ArraySegment<byte> target);
 
         //static byte[] ReadBytes(Stream stream, int length)
         //{

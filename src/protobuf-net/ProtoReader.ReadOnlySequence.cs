@@ -61,111 +61,6 @@ namespace ProtoBuf
                 }
 #endif
             }
-            internal static int TryParseUInt32Varint(ProtoReader @this, int offset, bool trimNegative, out uint value, ReadOnlySpan<byte> span)
-            {
-                if ((uint)offset >= (uint)span.Length)
-                {
-                    value = 0;
-                    return 0;
-                }
-
-                value = span[offset++];
-                if ((value & 0x80) == 0) return 1;
-                value &= 0x7F;
-
-                if ((uint)offset >= (uint)span.Length) ThrowEoF(@this);
-                uint chunk = span[offset++];
-                value |= (chunk & 0x7F) << 7;
-                if ((chunk & 0x80) == 0) return 2;
-
-                if ((uint)offset >= (uint)span.Length) ThrowEoF(@this);
-                chunk = span[offset++];
-                value |= (chunk & 0x7F) << 14;
-                if ((chunk & 0x80) == 0) return 3;
-
-                if ((uint)offset >= (uint)span.Length) ThrowEoF(@this);
-                chunk = span[offset++];
-                value |= (chunk & 0x7F) << 21;
-                if ((chunk & 0x80) == 0) return 4;
-
-                if ((uint)offset >= (uint)span.Length) ThrowEoF(@this);
-                chunk = span[offset++];
-                value |= chunk << 28; // can only use 4 bits from this chunk
-                if ((chunk & 0xF0) == 0) return 5;
-
-                if (trimNegative // allow for -ve values
-                    && (chunk & 0xF0) == 0xF0
-                    && offset + 4 < (uint)span.Length
-                        && span[offset] == 0xFF
-                        && span[offset + 1] == 0xFF
-                        && span[offset + 2] == 0xFF
-                        && span[offset + 3] == 0xFF
-                        && span[offset + 4] == 0x01)
-                {
-                    return 10;
-                }
-
-                ThrowOverflow(@this);
-                return 0;
-            }
-            internal static int TryParseUInt64Varint(ProtoReader @this, int offset, out ulong value, ReadOnlySpan<byte> span)
-            {
-                if ((uint)offset >= (uint)span.Length)
-                {
-                    value = 0;
-                    return 0;
-                }
-                value = span[offset++];
-                if ((value & 0x80) == 0) return 1;
-                value &= 0x7F;
-
-                if ((uint)offset >= (uint)span.Length) ThrowEoF(@this);
-                ulong chunk = span[offset++];
-                value |= (chunk & 0x7F) << 7;
-                if ((chunk & 0x80) == 0) return 2;
-
-                if ((uint)offset >= (uint)span.Length) ThrowEoF(@this);
-                chunk = span[offset++];
-                value |= (chunk & 0x7F) << 14;
-                if ((chunk & 0x80) == 0) return 3;
-
-                if ((uint)offset >= (uint)span.Length) ThrowEoF(@this);
-                chunk = span[offset++];
-                value |= (chunk & 0x7F) << 21;
-                if ((chunk & 0x80) == 0) return 4;
-
-                if ((uint)offset >= (uint)span.Length) ThrowEoF(@this);
-                chunk = span[offset++];
-                value |= (chunk & 0x7F) << 28;
-                if ((chunk & 0x80) == 0) return 5;
-
-                if ((uint)offset >= (uint)span.Length) ThrowEoF(@this);
-                chunk = span[offset++];
-                value |= (chunk & 0x7F) << 35;
-                if ((chunk & 0x80) == 0) return 6;
-
-                if ((uint)offset >= (uint)span.Length) ThrowEoF(@this);
-                chunk = span[offset++];
-                value |= (chunk & 0x7F) << 42;
-                if ((chunk & 0x80) == 0) return 7;
-
-                if ((uint)offset >= (uint)span.Length) ThrowEoF(@this);
-                chunk = span[offset++];
-                value |= (chunk & 0x7F) << 49;
-                if ((chunk & 0x80) == 0) return 8;
-
-                if ((uint)offset >= (uint)span.Length) ThrowEoF(@this);
-                chunk = span[offset++];
-                value |= (chunk & 0x7F) << 56;
-                if ((chunk & 0x80) == 0) return 9;
-
-                if ((uint)offset >= (uint)span.Length) ThrowEoF(@this);
-                chunk = span[offset];
-                value |= chunk << 63; // can only use 1 bit from this chunk
-
-                if ((chunk & ~(ulong)0x01) != 0) ThrowOverflow(@this);
-                return 10;
-            }
 
             [ThreadStatic]
             private static ReadOnlySequenceProtoReader s_lastReader;
@@ -219,121 +114,89 @@ namespace ProtoBuf
                 return state.Span.Length;
             }
 
-            private protected override int ImplTryReadUInt64VarintWithoutMoving(ref State state, out ulong value)
+            private protected override ulong FallbackReadUInt64Varint(ref State state)
             {
-                return state.RemainingInCurrent >= 10
-                    ? TryParseUInt64Varint(this, state.OffsetInCurrent, out value, state.Span)
-                    : ViaStackAlloc(ref state, out value);
+                Span<byte> span = stackalloc byte[10];
+                Span<byte> target = span;
 
-                int ViaStackAlloc(ref State s, out ulong val)
+                int available = 0;
+                if (state.RemainingInCurrent != 0)
                 {
-                    Span<byte> span = stackalloc byte[10];
-                    Span<byte> target = span;
-
-                    int available = 0;
-                    if (s.RemainingInCurrent != 0)
-                    {
-                        int take = Math.Min(s.RemainingInCurrent, target.Length);
-                        Peek(ref s, take).CopyTo(target);
-                        target = target.Slice(available);
-                        available += take;
-                    }
-
-                    var iterCopy = _source;
-                    while (!target.IsEmpty && iterCopy.MoveNext())
-                    {
-                        var nextBuffer = iterCopy.Current.Span;
-                        var take = Math.Min(nextBuffer.Length, target.Length);
-
-                        nextBuffer.Slice(0, take).CopyTo(target);
-                        target = target.Slice(take);
-                        available += take;
-                    }
-
-                    if (available != 10) span = span.Slice(0, available);
-                    return TryParseUInt64Varint(this, 0, out val, span);
+                    int take = Math.Min(state.RemainingInCurrent, target.Length);
+                    Peek(ref state, take).CopyTo(target);
+                    target = target.Slice(available);
+                    available += take;
                 }
-            }
 
-            private protected override uint ImplReadUInt32Fixed(ref State state)
-            {
-                return state.RemainingInCurrent >= 4
-                    ? BinaryPrimitives.ReadUInt32LittleEndian(Consume(ref state, 4))
-                    : ViaStackAlloc(ref state);
-
-                uint ViaStackAlloc(ref State st)
+                var iterCopy = _source;
+                while (!target.IsEmpty && iterCopy.MoveNext())
                 {
-                    Span<byte> span = stackalloc byte[4];
-                    // manually inline ImplReadBytes because of compiler restriction
-                    var target = span;
-                    while (!target.IsEmpty)
-                    {
-                        var take = Math.Min(GetSomeData(ref st), target.Length);
-                        Consume(ref st, take).CopyTo(target);
-                        target = target.Slice(take);
-                    }
-                    return BinaryPrimitives.ReadUInt32LittleEndian(span);
+                    var nextBuffer = iterCopy.Current.Span;
+                    var take = Math.Min(nextBuffer.Length, target.Length);
+
+                    nextBuffer.Slice(0, take).CopyTo(target);
+                    target = target.Slice(take);
+                    available += take;
                 }
+
+                if (available != 10) span = span.Slice(0, available);
+                int bytes = State.TryParseUInt64Varint(span, out var val);
+                ProtoReader.ImplSkipBytes(this, ref state, bytes);
+                return val;
             }
 
-            private protected override ulong ImplReadUInt64Fixed(ref State state)
+            private protected override uint FallbackReadUInt32Fixed(ref State state)
             {
-                return state.RemainingInCurrent >= 8
-                    ? BinaryPrimitives.ReadUInt64LittleEndian(Consume(ref state, 8))
-                    : ViaStackAlloc(ref state);
-
-                ulong ViaStackAlloc(ref State st)
+                Span<byte> span = stackalloc byte[4];
+                // manually inline ImplReadBytes because of compiler restriction
+                var target = span;
+                while (!target.IsEmpty)
                 {
-                    Span<byte> span = stackalloc byte[8];
-                    // manually inline ImplReadBytes because of compiler restriction
-                    var target = span;
-                    while (!target.IsEmpty)
-                    {
-                        var take = Math.Min(GetSomeData(ref st), target.Length);
-                        Consume(ref st, take).CopyTo(target);
-                        target = target.Slice(take);
-                    }
-                    return BinaryPrimitives.ReadUInt64LittleEndian(span);
+                    var take = Math.Min(GetSomeData(ref state), target.Length);
+                    Consume(ref state, take).CopyTo(target);
+                    target = target.Slice(take);
                 }
+                return BinaryPrimitives.ReadUInt32LittleEndian(span);
             }
 
-            private protected override string ImplReadString(ref State state, int bytes)
+            private protected override ulong FallbackReadUInt64Fixed(ref State state)
             {
-                return state.RemainingInCurrent >= bytes
-                    ? ToString(Consume(ref state, bytes, out var offset), offset, bytes)
-                    : ImplReadStringMultiSegment(ref state, bytes);
+                Span<byte> span = stackalloc byte[8];
+                // manually inline ImplReadBytes because of compiler restriction
+                var target = span;
+                while (!target.IsEmpty)
+                {
+                    var take = Math.Min(GetSomeData(ref state), target.Length);
+                    Consume(ref state, take).CopyTo(target);
+                    target = target.Slice(take);
+                }
+                return BinaryPrimitives.ReadUInt64LittleEndian(span);
             }
 
-            private string ImplReadStringMultiSegment(ref State state, int bytes)
+            private protected override string FallbackReadString(ref State state, int bytes)
             {
                 // we should probably do the work with a Decoder,
                 // but this works for today
                 using (var mem = MemoryPool<byte>.Shared.Rent(bytes))
                 {
                     var span = mem.Memory.Span;
-                    ImplReadBytes(ref state, span);
+                    FallbackReadBytes(ref state, span);
                     return ToString(span, 0, bytes);
                 }
             }
 
-            private void ImplReadBytes(ref State state, Span<byte> target)
+            private void FallbackReadBytes(ref State state, Span<byte> target)
             {
-                if (state.RemainingInCurrent >= target.Length) Consume(ref state, target.Length).CopyTo(target);
-                else Looped(ref state, target);
-
-                void Looped(ref State st, Span<byte> ttarget)
+                while (!target.IsEmpty)
                 {
-                    while (!ttarget.IsEmpty)
-                    {
-                        var take = Math.Min(GetSomeData(ref st), ttarget.Length);
-                        Consume(ref st, take).CopyTo(ttarget);
-                        ttarget = ttarget.Slice(take);
-                    }
+                    var take = Math.Min(GetSomeData(ref state), target.Length);
+                    Consume(ref state, take).CopyTo(target);
+                    target = target.Slice(take);
                 }
             }
 
-            private protected override void ImplReadBytes(ref State state, ArraySegment<byte> target)
-                => ImplReadBytes(ref state, new Span<byte>(target.Array, target.Offset, target.Count));
+            private protected override void FallbackReadBytes(ref State state, ArraySegment<byte> target)
+                => FallbackReadBytes(ref state, target.AsSpan());
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             private ReadOnlySpan<byte> Consume(ref State state, int bytes)
@@ -353,58 +216,43 @@ namespace ProtoBuf
             private ReadOnlySpan<byte> Peek(ref State state, int bytes)
                 => state.Span.Slice(state.OffsetInCurrent, bytes);
 
-            private protected override int ImplTryReadUInt32VarintWithoutMoving(ref State state, Read32VarintMode mode, out uint value)
+            private protected override int FallbackTryReadUInt32VarintWithoutMoving(ref State state, out uint value)
             {
-                return state.RemainingInCurrent >= 10
-                    ? TryParseUInt32Varint(this, state.OffsetInCurrent,
-                        mode == Read32VarintMode.Signed, out value, state.Span)
-                    : ViaStackAlloc(ref state, mode, out value);
+                Span<byte> span = stackalloc byte[5];
+                Span<byte> target = span;
+                var currentBuffer = Peek(ref state, Math.Min(target.Length, state.RemainingInCurrent));
+                currentBuffer.CopyTo(target);
+                int available = currentBuffer.Length;
+                target = target.Slice(available);
 
-                int ViaStackAlloc(ref State s, Read32VarintMode m, out uint val)
+                var iterCopy = _source;
+                while (!target.IsEmpty && iterCopy.MoveNext())
                 {
-                    Span<byte> span = stackalloc byte[10];
-                    Span<byte> target = span;
-                    var currentBuffer = Peek(ref s, Math.Min(target.Length, s.RemainingInCurrent));
-                    currentBuffer.CopyTo(target);
-                    int available = currentBuffer.Length;
-                    target = target.Slice(available);
+                    var nextBuffer = iterCopy.Current.Span;
+                    var take = Math.Min(nextBuffer.Length, target.Length);
 
-                    var iterCopy = _source;
-                    while (!target.IsEmpty && iterCopy.MoveNext())
-                    {
-                        var nextBuffer = iterCopy.Current.Span;
-                        var take = Math.Min(nextBuffer.Length, target.Length);
-
-                        nextBuffer.Slice(0, take).CopyTo(target);
-                        target = target.Slice(take);
-                        available += take;
-                    }
-                    if (available != 10) span = span.Slice(0, available);
-                    return TryParseUInt32Varint(this, 0, m == Read32VarintMode.Signed, out val, span);
+                    nextBuffer.Slice(0, take).CopyTo(target);
+                    target = target.Slice(take);
+                    available += take;
                 }
+                if (available == 0)
+                {
+                    value = 0;
+                    return 0;
+                }
+                if (available != 5) span = span.Slice(0, available);
+                return State.TryParseUInt32Varint(span, out value);
             }
 
-            private protected override void ImplSkipBytes(ref State state, long count)
+            private protected override void FallbackSkipBytes(ref State state, long count)
             {
-                if (state.RemainingInCurrent >= count) Skip(ref state, (int)count);
-                else Looped(ref state, count);
-
-                void Looped(ref State st, long ccount)
+                while (count != 0)
                 {
-                    while (ccount != 0)
-                    {
-                        var take = (int)Math.Min(GetSomeData(ref st), ccount);
-                        Skip(ref st, take);
-                        ccount -= take;
-                    }
+                    var take = (int)Math.Min(GetSomeData(ref state), count);
+                    state.Skip(take);
+                    Advance(take);
+                    count -= take;
                 }
-            }
-
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            private void Skip(ref State state, int bytes)
-            {
-                state.Skip(bytes);
-                Advance(bytes);
             }
 
             private protected override bool IsFullyConsumed(ref State state)

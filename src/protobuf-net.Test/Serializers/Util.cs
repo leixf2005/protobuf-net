@@ -10,7 +10,7 @@ using ProtoBuf.Compiler;
 
 namespace ProtoBuf.unittest.Serializers
 {
-    static partial class Util
+    internal static partial class Util
     {
 #if !NO_INTERNAL_CONTEXT
         public static void Test(object value, Type innerType, Func<IProtoSerializer, IProtoSerializer> ctor,
@@ -106,7 +106,7 @@ namespace ProtoBuf.unittest.Serializers
                 {
                     action(pw);
                 }
-                string s = GetHex(ms.ToArray());               
+                string s = GetHex(ms.ToArray());
                 Assert.Equal(expectedHex, s);
             }
         }

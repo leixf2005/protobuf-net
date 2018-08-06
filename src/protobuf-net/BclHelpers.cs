@@ -18,7 +18,7 @@ namespace ProtoBuf
     /// Provides support for common .NET types that do not have a direct representation
     /// in protobuf, using the definitions from bcl.proto
     /// </summary>
-    public class BclHelpers // should really be static, but I'm cheating with a <T>
+    public sealed class BclHelpers // should really be static, but I'm cheating with a <T>
     {
         private BclHelpers() { }
         /// <summary>
