@@ -995,7 +995,7 @@ namespace ProtoBuf.Reflection
 
             if (method.ClientStreaming) ctx.WriteLine("// client streaming");
             if (method.ServerStreaming) ctx.WriteLine("// server streaming");
-            ctx.Write($"ValueTask<{Escape(outputName)}> {Escape(method.Name)}({Escape(inputName)} value);").WriteLine();
+            ctx.Write($"ValueTask<{outputName}> {Escape(ctx.NameNormalizer.GetName(method))}({inputName} value);").WriteLine();
         }
     }
 }
