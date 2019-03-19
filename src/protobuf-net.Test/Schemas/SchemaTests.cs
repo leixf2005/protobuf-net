@@ -300,9 +300,10 @@ namespace ProtoBuf.Schemas
             var errors = set.GetErrors();
             Exception genError = null;
 
+            var options = new Dictionary<string, string> { { "rpc", "gRPC" } };
             try
             {
-                foreach (var file in CSharpCodeGenerator.Default.Generate(set))
+                foreach (var file in CSharpCodeGenerator.Default.Generate(set, options: options))
                 {
                     var newExtension = "parser" + Path.GetExtension(file.Name);
                     var newFileName = Path.ChangeExtension(file.Name, newExtension);

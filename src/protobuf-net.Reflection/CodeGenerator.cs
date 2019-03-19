@@ -112,6 +112,13 @@ namespace ProtoBuf.Reflection
         protected Access GetAccess(EnumDescriptorProto obj)
             => NullIfInherit(obj?.Options?.GetOptions()?.Access)
                 ?? NullIfInherit(GetAccess(obj?.Parent)) ?? Access.Public;
+
+        /// <summary>
+        /// Obtain the access of an item, accounting for the model's hierarchy
+        /// </summary>
+        protected Access GetAccess(ServiceDescriptorProto obj)
+            => NullIfInherit(obj?.Options?.GetOptions()?.Access) ?? Access.Public;
+
         /// <summary>
         /// Get the textual name of a given access level
         /// </summary>
@@ -122,6 +129,9 @@ namespace ProtoBuf.Reflection
         /// The indentation used by this code generator
         /// </summary>
         public virtual string Indent => "    ";
+
+
+
         /// <summary>
         /// The file extension of the files generatred by this generator
         /// </summary>
@@ -219,13 +229,16 @@ namespace ProtoBuf.Reflection
         /// </summary>
         protected virtual void WriteService(GeneratorContext ctx, ServiceDescriptorProto service)
         {
-            object state = null;
-            WriteServiceHeader(ctx, service, ref state);
-            foreach (var inner in service.Methods)
+            if (ctx.ServiceType != ServiceType.None)
             {
-                WriteServiceMethod(ctx, inner, ref state);
+                object state = null;
+                WriteServiceHeader(ctx, service, ref state);
+                foreach (var inner in service.Methods)
+                {
+                    WriteServiceMethod(ctx, inner, ref state);
+                }
+                WriteServiceFooter(ctx, service, ref state);
             }
-            WriteServiceFooter(ctx, service, ref state);
         }
         /// <summary>
         /// Emit code following a set of service methods
@@ -497,7 +510,19 @@ namespace ProtoBuf.Reflection
                 OneOfEnums = (File.Options?.GetOptions()?.EmitOneOfEnum ?? false) || (_options != null && _options.TryGetValue("oneof", out var oneof) && string.Equals(oneof, "enum", StringComparison.OrdinalIgnoreCase));
 
                 EmitListSetters = IsEnabled("listset");
+
+                if (options != null)
+                {
+                    if (options.TryGetValue("rpc", out var svcType)
+                            && !string.IsNullOrEmpty(svcType)
+                            && Enum.TryParse<ServiceType>(svcType, out var parsed))
+                    {
+                        ServiceType = parsed;
+                    }
+                }
             }
+
+            internal ServiceType ServiceType { get; }
 
             internal bool EmitListSetters { get; }
             internal bool IsEnabled(string key)
@@ -671,5 +696,11 @@ namespace ProtoBuf.Reflection
                 }
             }
         }
+    }
+
+    internal enum ServiceType
+    {
+        None = 0,
+        gRPC = 1,
     }
 }

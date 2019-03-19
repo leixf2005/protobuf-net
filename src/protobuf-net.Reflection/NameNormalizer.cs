@@ -172,6 +172,15 @@ namespace ProtoBuf.Reflection
         /// <summary>
         /// Suggest a normalized identifier
         /// </summary>
+        public virtual string GetName(ServiceDescriptorProto definition)
+        {
+            var name = definition?.Options?.GetOptions()?.Name;
+            if (!string.IsNullOrWhiteSpace(name)) return name;
+            return GetName("I" + definition.Name);
+        }
+        /// <summary>
+        /// Suggest a normalized identifier
+        /// </summary>
         public virtual string GetName(FieldDescriptorProto definition)
         {
             var name = definition?.Options?.GetOptions()?.Name;

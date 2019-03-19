@@ -966,5 +966,36 @@ namespace ProtoBuf.Reflection
 
         private const string WellKnownTypeTimestamp = ".google.protobuf.Timestamp",
                      WellKnownTypeDuration = ".google.protobuf.Duration";
+
+        protected override void WriteServiceHeader(GeneratorContext ctx, ServiceDescriptorProto service, ref object state)
+        {
+            var name = ctx.NameNormalizer.GetName(service);
+            var tw = ctx.Write("[global::ProtoBuf.ProtoContract(");
+            if (name != service.Name) tw.Write($@"Name = @""{service.Name}""");
+            tw.WriteLine(")]");
+            WriteOptions(ctx, service.Options);
+            ctx.WriteLine($"{GetAccess(GetAccess(service))} interface {Escape(name)}").WriteLine("{").Indent();
+        }
+        protected override void WriteServiceFooter(GeneratorContext ctx, ServiceDescriptorProto service, ref object state)
+        {
+            ctx.Outdent().WriteLine("}").WriteLine();
+        }
+
+        protected override void WriteServiceMethod(GeneratorContext ctx, MethodDescriptorProto method, ref object state)
+        {
+            string GetName(string type)
+            {
+                var msg = ctx.TryFind<DescriptorProto>(method.InputType);
+                if (msg == null) return Escape(type);
+                return FindNameFromCommonAncestor(method.Parent, msg, ctx.NameNormalizer);
+
+            }
+            var inputName = GetName(method.InputType);
+            var outputName = GetName(method.OutputType);
+
+            if (method.ClientStreaming) ctx.WriteLine("// client streaming");
+            if (method.ServerStreaming) ctx.WriteLine("// server streaming");
+            ctx.Write($"ValueTask<{Escape(outputName)}> {Escape(method.Name)}({Escape(inputName)} value);").WriteLine();
+        }
     }
 }

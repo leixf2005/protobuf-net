@@ -668,7 +668,10 @@ namespace Google.Protobuf.Reflection
             else if (tokens.ConsumeIf(TokenType.AlphaNumeric, "service"))
             {
                 if (ServiceDescriptorProto.TryParse(ctx, out var obj))
+                {
+                    obj.Parent = this;
                     Services.Add(obj);
+                }
             }
             else if (tokens.ConsumeIf(TokenType.AlphaNumeric, "import"))
             {
@@ -1968,8 +1971,14 @@ namespace Google.Protobuf.Reflection
         List<FieldDescriptorProto> Fields { get; }
     }
 
-    public partial class ServiceDescriptorProto : ISchemaObject
+    public partial class ServiceDescriptorProto : ISchemaObject, IType
     {
+        internal FileDescriptorProto Parent { get; set; }
+        IType IType.Parent => Parent;
+
+        string IType.FullyQualifiedName => null;
+        IType IType.Find(string name) => null;
+
         internal static bool TryParse(ParserContext ctx, out ServiceDescriptorProto obj)
         {
             var name = ctx.Tokens.Consume(TokenType.AlphaNumeric);
@@ -1980,6 +1989,7 @@ namespace Google.Protobuf.Reflection
             }
             return false;
         }
+
         void ISchemaObject.ReadOne(ParserContext ctx)
         {
             ctx.AbortState = AbortState.Statement;
@@ -1992,7 +2002,9 @@ namespace Google.Protobuf.Reflection
             else
             {
                 // is a method
-                Methods.Add(MethodDescriptorProto.Parse(ctx));
+                var method = MethodDescriptorProto.Parse(ctx);
+                method.Parent = this;
+                Methods.Add(method);
             }
             ctx.AbortState = AbortState.None;
         }
@@ -2000,6 +2012,8 @@ namespace Google.Protobuf.Reflection
 
     public partial class MethodDescriptorProto : ISchemaObject
     {
+        internal ServiceDescriptorProto Parent { get; set; }
+
         internal Token InputTypeToken { get; set; }
         internal Token OutputTypeToken { get; set; }
 
